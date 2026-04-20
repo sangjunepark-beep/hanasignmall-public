@@ -1,29 +1,35 @@
 /**
- * 하나사인몰 어드민 실시간 감사 대시보드 (v1 · 2026-04-20)
+ * 하나사인몰 어드민 실시간 감사 대시보드 (v2 · 2026-04-20)
+ *
+ * 변경점 (v2):
+ *   - 대시보드 크기 1.5배 확대 (width 520→760, font-size↑, log 높이↑)
+ *   - 현재 GoodsList URL에서 카테고리/viewCnt 자동 감지
+ *   - 검색 결과 전체 페이지 자동 감지 ("총 N건" + 페이지네이션 교차 확인)
+ *   - 북마클릿 실행 친화적 (한 클릭으로 동작)
  *
  * 사용법:
- *   1) ad.hanasm.kr 로그인 탭에서 F12 → Console
- *   2) 이 파일 전체 내용 붙여넣기 → Enter
- *   또는 북마클릿/리더:
- *      fetch('https://raw.githubusercontent.com/sangjunepark-beep/hanasignmall-cowork/main/realtime_audit.js')
- *        .then(r=>r.text()).then(eval)
- *
- * 기본 범위: 입간판(카테고리 04) 1~4페이지 × 30 = 120개
- * 변경: window.HS_AUDIT_CONFIG = {cat:'04', pages:[1,2,3,4,5], viewCnt:30, batch:10, pace:300}
- *        로 지정 후 재실행
+ *   - GoodsList 페이지에서 북마클릿 클릭 또는 Snippets로 실행
+ *   - 별도 설정 없으면 현재 필터의 전체 페이지를 감사
+ *   - 범위 강제: window.HS_AUDIT_CONFIG = {pages:[1,2], pace:200}
  */
 (function(){
 'use strict';
 
 // ================== 설정 ==================
+// 현재 URL에서 카테고리/viewCnt 자동 감지 (GoodsList.php일 때)
+const urlParams = new URLSearchParams(location.search);
+const autoCat = urlParams.get('CodeT1_1') || '04';
+const autoViewCnt = parseInt(urlParams.get('viewCnt') || '30');
+
 const CFG = Object.assign({
-  cat: '04',               // 카테고리 코드 (04=입간판)
-  catName: '입간판',
-  pages: [1, 2, 3, 4],     // 대상 페이지
-  viewCnt: 30,             // 페이지당 상품 수
+  cat: autoCat,            // 기본: 현재 URL의 CodeT1_1
+  catName: '',             // 자동 라벨 찾음
+  pages: 'auto',           // 'auto' = 전체 페이지 자동 감지
+  viewCnt: autoViewCnt,    // 기본: 현재 URL의 viewCnt
   batch: 10,               // fetch 병렬 묶음
-  pace: 300,               // 각 상품 UI 업데이트 후 지연 (ms) — 시연용
-  batchGap: 400,           // 배치 간 간격 (ms)
+  pace: 200,               // 각 상품 UI 업데이트 후 지연 (ms)
+  batchGap: 300,           // 배치 간 간격 (ms)
+  scale: 1.5,              // 대시보드 크기 배율 (1=기본, 1.5=150%, 2=200%)
 }, window.HS_AUDIT_CONFIG || {});
 
 // 기존 대시보드가 있으면 제거
@@ -38,13 +44,15 @@ root.innerHTML = `
   #hs-audit-root, #hs-audit-root * { box-sizing: border-box; font-family: -apple-system, "Noto Sans KR", "Segoe UI", sans-serif; }
   #hs-audit-root {
     position: fixed; top: 16px; right: 16px; z-index: 999999;
-    width: 520px; max-height: calc(100vh - 32px);
+    width: calc(520px * var(--hs-scale, 1.5));
+    max-height: calc(100vh - 32px);
     background: #0a0e1a; color: #e4e9f0; border: 1px solid #1e293b;
     border-radius: 12px; box-shadow: 0 24px 64px rgba(0,0,0,0.5);
     display: flex; flex-direction: column; overflow: hidden;
-    font-size: 12px; line-height: 1.5;
+    font-size: calc(12px * var(--hs-scale, 1.5));
+    line-height: 1.5;
   }
-  #hs-audit-root.minimized { width: 320px; max-height: 60px; }
+  #hs-audit-root.minimized { width: calc(320px * var(--hs-scale, 1.5)); max-height: 60px; }
   #hs-audit-root .ha-header {
     display: flex; justify-content: space-between; align-items: center;
     padding: 12px 16px; background: #111827; border-bottom: 1px solid #1e293b;
@@ -104,7 +112,7 @@ root.innerHTML = `
   #hs-audit-root .ha-cur .j.warn { background: #78350f; color: #fcd34d; }
   #hs-audit-root .ha-cur .j.err { background: #7f1d1d; color: #fca5a5; }
 
-  #hs-audit-root .ha-log { background: #020617; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; height: 180px; overflow-y: auto; font-family: "SF Mono", monospace; font-size: 10px; line-height: 1.6; }
+  #hs-audit-root .ha-log { background: #020617; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; height: calc(180px * var(--hs-scale, 1.5)); overflow-y: auto; font-family: "SF Mono", monospace; font-size: calc(10px * var(--hs-scale, 1.5)); line-height: 1.6; }
   #hs-audit-root .ha-log::-webkit-scrollbar { width: 5px; }
   #hs-audit-root .ha-log::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
   #hs-audit-root .ha-log .ln { display: flex; gap: 6px; }
@@ -171,6 +179,7 @@ root.innerHTML = `
 </div>
 `;
 document.body.appendChild(root);
+root.style.setProperty('--hs-scale', String(CFG.scale));
 
 // ================== 헬퍼 ==================
 const $ = id => document.getElementById(id);
@@ -263,6 +272,46 @@ $('ha-close').onclick = () => { stopped = true; clearInterval(clockTimer); root.
 // ================== 감사 로직 ==================
 const G = {'01':'G1','02':'G2','03':'G3','04':'G4','05':'G5','06':'G6','07':'G7','08':'G8','09':'G9'};
 const CBR = /^(\d{2})`\d`(\d{2}-\d{2})`/;
+
+// 현재 검색 필터의 전체 페이지 자동 감지
+async function detectTotalPages() {
+  // 현재 페이지가 GoodsList.php이면 바로 파싱, 아니면 page=1로 fetch
+  let doc = document;
+  if (!location.pathname.includes('GoodsList.php')) {
+    const url = `/AdminManager/GoodsList.php?page=1&startpage=1&CodeT1_1=${CFG.cat}&viewCnt=${CFG.viewCnt}`;
+    const res = await fetch(url, {credentials:'include'});
+    const html = await res.text();
+    doc = new DOMParser().parseFromString(html, 'text/html');
+  }
+  // 1) "총 N건" 파싱
+  const bt = doc.body ? doc.body.innerText : '';
+  let total = null;
+  const m1 = bt.match(/총\s*([\d,]+)\s*건/);
+  const m2 = bt.match(/총\s*([\d,]+)/);
+  if (m1) total = parseInt(m1[1].replace(/,/g,''));
+  else if (m2) total = parseInt(m2[1].replace(/,/g,''));
+
+  // 2) 페이지네이션 링크의 최대 번호
+  const nums = new Set();
+  doc.querySelectorAll('a, button').forEach(el => {
+    const oc = el.getAttribute('onclick') || '';
+    // ItemSearch('', '5', '1') 형태
+    const m = oc.match(/ItemSearch\s*\(\s*['"]?[^,'"]*['"]?\s*,\s*['"]?(\d+)['"]?/);
+    if (m) nums.add(parseInt(m[1]));
+  });
+  const navMax = nums.size ? Math.max(...nums) : 0;
+
+  // 총건수 기반 계산이 우선 (더 정확)
+  let maxPage;
+  if (total != null && total > 0) {
+    maxPage = Math.ceil(total / CFG.viewCnt);
+  } else if (navMax > 0) {
+    maxPage = navMax;
+  } else {
+    maxPage = 1;
+  }
+  return {total, navMax, maxPage};
+}
 
 async function fetchGoodsList(page) {
   const url = `/AdminManager/GoodsList.php?page=${page}&startpage=1&CodeT1_1=${CFG.cat}&viewCnt=${CFG.viewCnt}`;
@@ -397,8 +446,38 @@ const RESULT = {config: CFG, started: startStr, items: []};
 
 // ================== 메인 파이프라인 ==================
 async function main(){
-  addLog('파이프라인 시작 · 카테고리=' + CFG.cat + ' (' + CFG.catName + ')', 'sys');
-  addLog('로그인 세션 확인: document.cookie 공유', 'sys');
+  addLog('파이프라인 시작 · 카테고리=' + CFG.cat + (CFG.catName ? ' ('+CFG.catName+')' : ''), 'sys');
+
+  // pages: 'auto' 이면 자동 감지
+  if (CFG.pages === 'auto' || !Array.isArray(CFG.pages)) {
+    addLog('전체 페이지 자동 감지 중...', 'sys');
+    try {
+      const d = await detectTotalPages();
+      if (d.total) addLog(`총 상품 ${d.total}건 · viewCnt=${CFG.viewCnt} · 최대 ${d.maxPage}페이지`, 'ok');
+      else addLog(`페이지네이션 기반 최대 ${d.maxPage}페이지 감지`, 'ok');
+      CFG.pages = [];
+      for (let i = 1; i <= d.maxPage; i++) CFG.pages.push(i);
+      CFG.total = d.total;
+    } catch (e) {
+      addLog('자동 감지 실패, 1페이지만 진행: ' + e.message, 'err');
+      CFG.pages = [1];
+    }
+  }
+  // 총 카운트 업데이트 (자동 감지 결과 반영)
+  const tgtTotal = CFG.pages.length * CFG.viewCnt;
+  $('ha-total').textContent = CFG.total || tgtTotal;
+  // 상단 서브 텍스트도 갱신
+  $('ha-sub').innerHTML = `카테고리 ${CFG.cat} · ${CFG.pages.length}페이지 × ${CFG.viewCnt} = <b>${CFG.total || tgtTotal}개</b> · 시작 <span id="ha-start-t">${startStr}</span> · 경과 <span id="ha-elapsed">00:00</span>`;
+  // 페이지 셀 재렌더링 (자동 감지된 페이지 수에 맞춤)
+  pgEl.innerHTML = '';
+  const pgCols = Math.min(CFG.pages.length, 10);
+  pgEl.style.gridTemplateColumns = `repeat(${pgCols}, 1fr)`;
+  CFG.pages.forEach(p => {
+    const el = document.createElement('div');
+    el.className = 'ha-pgc'; el.id = 'ha-pgc-' + p;
+    el.innerHTML = `<div class="pn">${p}P</div><div class="pc"><span id="ha-pgc-${p}-c">0</span>/${CFG.viewCnt}</div>`;
+    pgEl.appendChild(el);
+  });
 
   // ========== STEP 1: 수집 ==========
   setStep(1);
