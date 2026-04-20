@@ -301,13 +301,27 @@ $('ha-close').onclick = () => { stopped = true; clearInterval(clockTimer); root.
 const G = {'01':'G1','02':'G2','03':'G3','04':'G4','05':'G5','06':'G6','07':'G7','08':'G8','09':'G9'};
 const CBR = /^(\d{2})`\d`(\d{2}-\d{2})`/;
 
+// 현재 탭의 GoodsList 필터를 그대로 유지하면서 page만 교체
+// (판매상태·카테고리·기간 등 사용자가 지정한 모든 필터 보존)
+function buildListUrl(page) {
+  if (location.pathname.includes('GoodsList.php')) {
+    const params = new URLSearchParams(location.search);
+    params.set('page', String(page));
+    if (!params.has('startpage')) params.set('startpage', '1');
+    if (!params.has('CodeT1_1')) params.set('CodeT1_1', CFG.cat);
+    if (!params.has('viewCnt')) params.set('viewCnt', String(CFG.viewCnt));
+    return '/AdminManager/GoodsList.php?' + params.toString();
+  }
+  // GoodsList가 아니면 CFG 기반 (필터 없음, 경고 필요)
+  return `/AdminManager/GoodsList.php?page=${page}&startpage=1&CodeT1_1=${CFG.cat}&viewCnt=${CFG.viewCnt}`;
+}
+
 // 현재 검색 필터의 전체 페이지 자동 감지
 async function detectTotalPages() {
   // 현재 페이지가 GoodsList.php이면 바로 파싱, 아니면 page=1로 fetch
   let doc = document;
   if (!location.pathname.includes('GoodsList.php')) {
-    const url = `/AdminManager/GoodsList.php?page=1&startpage=1&CodeT1_1=${CFG.cat}&viewCnt=${CFG.viewCnt}`;
-    const res = await fetch(url, {credentials:'include'});
+    const res = await fetch(buildListUrl(1), {credentials:'include'});
     const html = await res.text();
     doc = new DOMParser().parseFromString(html, 'text/html');
   }
@@ -342,8 +356,10 @@ async function detectTotalPages() {
 }
 
 async function fetchGoodsList(page) {
-  const url = `/AdminManager/GoodsList.php?page=${page}&startpage=1&CodeT1_1=${CFG.cat}&viewCnt=${CFG.viewCnt}`;
-  addLog(`GET GoodsList.php?page=${page}`, 'info');
+  const url = buildListUrl(page);
+  // 필터 표시를 위해 short log 생성
+  const shortFilter = url.split('?')[1].replace(/^.*?page=\d+&?/, '').slice(0, 60);
+  addLog(`GET page=${page} · ${shortFilter}`, 'info');
   const res = await fetch(url, {credentials: 'include'});
   if (!res.ok) throw new Error('HTTP '+res.status);
   const html = await res.text();
@@ -475,6 +491,15 @@ const RESULT = {config: CFG, started: startStr, items: []};
 // ================== 메인 파이프라인 ==================
 async function main(){
   addLog('파이프라인 시작 · 카테고리=' + CFG.cat + (CFG.catName ? ' ('+CFG.catName+')' : ''), 'sys');
+  // 현재 탭 필터 상태 로그
+  if (location.pathname.includes('GoodsList.php')) {
+    const params = new URLSearchParams(location.search);
+    const keys = ['CodeT1_1','viewCnt','RegRegView','SearchKey','SearchString','DateStart','DateEnd'];
+    const shown = keys.filter(k => params.get(k)).map(k => `${k}=${params.get(k)}`);
+    addLog('필터 적용: ' + (shown.join(' · ') || '(기본)'), 'sys');
+  } else {
+    addLog('⚠️ GoodsList.php 아님 → 기본 필터 사용 (판매상태 무시됨)', 'warn');
+  }
 
   // pages: 'auto' 이면 자동 감지
   if (CFG.pages === 'auto' || !Array.isArray(CFG.pages)) {
