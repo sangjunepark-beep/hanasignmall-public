@@ -142,12 +142,12 @@ root.innerHTML = `
 
 <div class="ha-body">
   <div style="font-size:11px;color:#94a3b8;margin-bottom:10px" id="ha-sub">
-    카테고리 ${CFG.cat} · ${CFG.pages.length}페이지 × ${CFG.viewCnt}개 = <b>${CFG.pages.length*CFG.viewCnt}개 대상</b>
+    카테고리 ${CFG.cat} · ${Array.isArray(CFG.pages)?CFG.pages.length+'페이지':'전체 페이지 자동 감지'} · viewCnt=${CFG.viewCnt}
     · 시작시각 <span id="ha-start-t">--:--</span> · 경과 <span id="ha-elapsed">00:00</span>
   </div>
 
   <div class="ha-metrics">
-    <div class="ha-mc blue"><div class="l">전체</div><div class="v" id="ha-total">${CFG.pages.length*CFG.viewCnt}</div></div>
+    <div class="ha-mc blue"><div class="l">전체</div><div class="v" id="ha-total">${Array.isArray(CFG.pages)?CFG.pages.length*CFG.viewCnt:'…'}</div></div>
     <div class="ha-mc"><div class="l">완료</div><div class="v" id="ha-done">0</div></div>
     <div class="ha-mc ok"><div class="l">OK</div><div class="v" id="ha-ok">0</div></div>
     <div class="ha-mc warn"><div class="l">FIX</div><div class="v" id="ha-fix">0</div></div>
@@ -238,15 +238,17 @@ function updateCur(x) {
     <div><span class="l">체크수  :</span> <span>${x.cc||0} / ${x.ct||0}</span> ${x.judge ? `<span class="j ${jClass}">${x.judge}</span>` : ''}</div>`;
 }
 
-// ================== 페이지 셀 렌더 ==================
+// ================== 페이지 셀 렌더 (초기; main에서 자동감지 후 재렌더 가능) ==================
 const pgEl = $('ha-pg');
-CFG.pages.forEach(p => {
-  const el = document.createElement('div');
-  el.className = 'ha-pgc';
-  el.id = 'ha-pgc-' + p;
-  el.innerHTML = `<div class="pn">${p}P</div><div class="pc"><span id="ha-pgc-${p}-c">0</span>/${CFG.viewCnt}</div>`;
-  pgEl.appendChild(el);
-});
+if (Array.isArray(CFG.pages)) {
+  CFG.pages.forEach(p => {
+    const el = document.createElement('div');
+    el.className = 'ha-pgc';
+    el.id = 'ha-pgc-' + p;
+    el.innerHTML = `<div class="pn">${p}P</div><div class="pc"><span id="ha-pgc-${p}-c">0</span>/${CFG.viewCnt}</div>`;
+    pgEl.appendChild(el);
+  });
+}
 
 // ================== 헤더 조작 ==================
 let stopped = false;
