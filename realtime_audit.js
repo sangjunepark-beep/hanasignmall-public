@@ -195,7 +195,11 @@ root.innerHTML = `
     <div class="ha-dl-row" style="margin-top:10px">
       <button class="ha-btn" style="background:#581c87;color:#fff" id="ha-llm-run">🧠 LLM 판정 실행</button>
       <span id="ha-llm-status" style="font-size:calc(12px * var(--hs-scale, 1.5));color:#c4b5fd;margin-left:8px"></span>
-      <button class="ha-btn" style="background:#065f46;color:#fff;margin-left:auto" id="ha-backup-list">🛡️ 백업 목록</button>
+    </div>
+    <div class="ha-dl-row" style="margin-top:10px">
+      <button class="ha-btn" style="background:#065f46;color:#fff" id="ha-backup-list">🛡️ 백업 목록</button>
+      <button class="ha-btn" style="background:#991b1b;color:#fff;margin-left:auto" id="ha-rollback">🔙 롤백 실행</button>
+      <span id="ha-rb-status" style="font-size:calc(12px * var(--hs-scale, 1.5));color:#fca5a5;margin-left:8px"></span>
     </div>
   </div>
 
@@ -420,6 +424,7 @@ async function auditOne(item) {
     if (h2 && h2.value) twoVals.push(h2.value.split('^')[0]);
   }
   const cd = {};
+  const checked_values = [];
   let cbT=0, cbC=0;
   doc.querySelectorAll('input[type="checkbox"]').forEach(x => {
     const m = (x.value||'').match(CBR);
@@ -428,9 +433,13 @@ async function auditOne(item) {
     const k = G[m[1]] || ('X'+m[1]);
     if (!cd[k]) cd[k] = [0, 0];
     cd[k][0]++;
-    if (x.hasAttribute('checked')) { cd[k][1]++; cbC++; }
+    if (x.hasAttribute('checked')) {
+      cd[k][1]++;
+      cbC++;
+      checked_values.push(x.value);  // 전체 value 저장 (롤백용)
+    }
   });
-  return Object.assign(item, {o: oneVals.join(','), t: twoVals.join(','), cc: cbC, ct: cbT, cd});
+  return Object.assign(item, {o: oneVals.join(','), t: twoVals.join(','), cc: cbC, ct: cbT, cd, checked_values});
 }
 
 // ================== 판정 규칙 ==================
@@ -1136,6 +1145,71 @@ JSON 배열만. 다른 텍스트·마크다운 금지.
     addLog('백업 재다운로드: ' + a.download, 'ok');
   };
 
+  // ============ 🔙 롤백 실행 ============
+  $('ha-rollback').onclick = async () => {
+    // 백업 소스 선택: localStorage 또는 파일
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('hs_backup_')).sort().reverse();
+    let source = keys.length > 0
+      ? confirm(`저장된 백업이 ${keys.length}개 있습니다.\n\n[확인] = 가장 최근 백업(${keys[0].replace('hs_backup_','')})으로 롤백\n[취소] = 다른 백업 파일 선택`)
+      : false;
+
+    let backup;
+    if (source) {
+      backup = JSON.parse(localStorage.getItem(keys[0]));
+    } else {
+      // 파일 선택
+      const file = await new Promise((res) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.onchange = e => res(e.target.files[0]);
+        input.click();
+      });
+      if (!file) { addLog('롤백 취소', 'warn'); return; }
+      const text = await file.text();
+      try { backup = JSON.parse(text); } catch(e) { alert('JSON 파싱 실패: ' + e.message); return; }
+    }
+
+    if (!backup || !backup.items) { alert('유효한 롤백 백업이 아닙니다.'); return; }
+
+    // 어떤 시점으로 돌릴지 확인
+    const msg = `📅 ${backup.ts || backup.created_at}\n` +
+                `카테고리: ${backup.category}\n` +
+                `수정 대상이었던 상품: ${backup.fix_count}건\n` +
+                `전체 감사 스냅샷: ${(backup.all_items_snapshot||[]).length}건\n\n` +
+                `이 백업의 상태로 되돌립니다.\n` +
+                `(각 상품의 체크박스를 백업 시점 상태로 복구)\n\n` +
+                `⚠️ 이 작업도 시간 걸리고 되돌리기 어렵습니다. 계속?`;
+    if (!confirm(msg)) { addLog('롤백 취소', 'warn'); return; }
+
+    $('ha-rollback').disabled = true;
+    $('ha-rollback').textContent = '롤백 진행 중...';
+    addLog(`🔙 롤백 시작 · ${backup.items.length}건`, 'sys');
+
+    // 롤백 대상은 items (수정 대상이었던 것) 우선
+    // 필요 시 all_items_snapshot 로 전체 복원도 가능 (이번은 items만)
+    const targets = backup.items;
+    let done=0, okCnt=0, errCnt=0;
+    for (const bit of targets) {
+      $('ha-rb-status').textContent = `${done+1}/${targets.length} · ${bit.rgr}`;
+      try {
+        const r = await rollbackOne(bit);
+        addLog(`[RB] ${bit.rgr} → ${r}`, 'ok');
+        okCnt++;
+      } catch(e) {
+        addLog(`[RB ERR] ${bit.rgr}: ${e.message}`, 'err');
+        errCnt++;
+      }
+      done++;
+    }
+
+    $('ha-rollback').disabled = false;
+    $('ha-rollback').textContent = '🔙 롤백 완료';
+    $('ha-rb-status').textContent = `완료 · 성공 ${okCnt} · 실패 ${errCnt}`;
+    addLog(`🔙 롤백 종료 · 성공 ${okCnt} · 실패 ${errCnt}`, 'sys');
+    alert(`롤백 완료\n성공 ${okCnt} · 실패 ${errCnt}\n\n재감사로 원상복구 여부 확인하세요.`);
+  };
+
   // ============ 자동 수정 섹션 ============
   const fixItems = sorted.filter(r => r.judge && r.judge.startsWith('FIX'));
   if (fixItems.length > 0) {
@@ -1217,16 +1291,27 @@ function autoFixBackup(fixItems) {
       name: it.name,
       page: it.page,
       judge: it.judge,
-      before: { o: it.o, t: it.t, cc: it.cc, ct: it.ct, cd: it.cd || {} },
+      before: {
+        o: it.o,
+        t: it.t,
+        cc: it.cc,
+        ct: it.ct,
+        cd: it.cd || {},
+        checked_values: it.checked_values || [],  // 롤백용 핵심 데이터
+      },
       planned: {
         o3_add: it.llm_o3 || (it.reason && (it.reason.match(/O3:(\d{2}-\d{2}-\d{3})/)||[])[1]) || null,
         spaces_recheck: it.llm_spaces || [],
         llm_reason: it.llm_reason || '',
       }
     })),
-    // 참고: 전체 감사 스냅샷도 포함 (복원 시 대조용)
+    // 전체 감사 스냅샷 (OK 상품 포함, 완전 복원용)
     all_items_snapshot: (window.HS_AUDIT_RESULT && window.HS_AUDIT_RESULT.items || []).map(it => ({
-      rgr: it.rgr, o: it.o, t: it.t, cc: it.cc
+      rgr: it.rgr,
+      o: it.o,
+      t: it.t,
+      cc: it.cc,
+      checked_values: it.checked_values || [],
     })),
   };
   // 파일 다운로드
@@ -1366,6 +1451,51 @@ async function fixOne(item) {
     }
 
     return results.join(',') || '변경없음';
+  } finally {
+    iframe.remove();
+  }
+}
+
+// ==================== 🔙 롤백 로직 ====================
+// 단일 상품의 체크박스를 백업 시점으로 되돌림
+async function rollbackOne(bit) {
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('data-hs-audit', '1');
+  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1024px;height:768px;border:0;pointer-events:none;opacity:0.01';
+  iframe.src = `/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${bit.rgr}&EditMode=1`;
+  document.body.appendChild(iframe);
+  try {
+    await new Promise((res, rej) => {
+      const t = setTimeout(()=>rej(new Error('iframe 로드 타임아웃')), 20000);
+      iframe.onload = () => { clearTimeout(t); res(); };
+    });
+    await new Promise(r => setTimeout(r, 2500));
+    const doc = iframe.contentDocument;
+    const CBR = /^(\d{2})`\d`(\d{2}-\d{2})`/;
+    const beforeValues = new Set(bit.before && bit.before.checked_values || []);
+
+    // 1) 현재 체크된 관심분야 체크박스 모두 모음
+    const allCb = Array.from(doc.querySelectorAll('input[type="checkbox"]')).filter(x => CBR.test(x.value||''));
+    const currentlyChecked = allCb.filter(x => x.hasAttribute('checked') || x.checked);
+
+    let off=0, on=0;
+    // 2) 백업에 없는 현재 체크 → 해제
+    for (const cb of currentlyChecked) {
+      if (!beforeValues.has(cb.value)) {
+        cb.click(); off++;
+        if (off % 30 === 0) await new Promise(r => setTimeout(r, 400));
+        else await new Promise(r => setTimeout(r, 80));
+      }
+    }
+    // 3) 백업에 있는데 현재 꺼짐 → 체크
+    for (const cb of allCb) {
+      if (beforeValues.has(cb.value) && !cb.checked) {
+        cb.click(); on++;
+        if (on % 30 === 0) await new Promise(r => setTimeout(r, 400));
+        else await new Promise(r => setTimeout(r, 80));
+      }
+    }
+    return `CB 복원 · 해제 ${off} / 재체크 ${on}`;
   } finally {
     iframe.remove();
   }
