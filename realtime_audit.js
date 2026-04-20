@@ -195,6 +195,7 @@ root.innerHTML = `
     <div class="ha-dl-row" style="margin-top:10px">
       <button class="ha-btn" style="background:#581c87;color:#fff" id="ha-llm-run">🧠 LLM 판정 실행</button>
       <span id="ha-llm-status" style="font-size:calc(12px * var(--hs-scale, 1.5));color:#c4b5fd;margin-left:8px"></span>
+      <button class="ha-btn" style="background:#065f46;color:#fff;margin-left:auto" id="ha-backup-list">🛡️ 백업 목록</button>
     </div>
   </div>
 
@@ -634,6 +635,47 @@ async function main(){
   // ============ 매핑 테이블 ============
   const O1_MAP = {'01':'게시판','02':'안내판','04':'입간판','05':'현수막/배너','07':'구조물','08':'도로안전용품','09':'각종물품','10':'인쇄물/스티커','13':'개인결제','60':'기획전'};
   const T1_MAP = {'01':'학교/학원','02':'식당/카페','03':'아파트','04':'호텔/펜션','05':'병원/요양시설','06':'회사/공장','07':'공공기관','08':'헬스/레저','09':'기타업종','12':'개인결제창'};
+  // O2 매핑 (1차-2차 조합)
+  const O2_MAP = {
+    '04-01':'A형입간판','04-02':'스텐/금속입간판','04-03':'오뚜기/원통',
+    '02-01':'기본 안내판','02-06':'사인 플레이트',
+    '07-03':'구조물 부속','07-04':'구조물 추가',
+    '08-03':'주차금지/도로안전','08-10':'도로안전 부속',
+    '09-09':'각종물품 특수',
+    '01-01':'게시판 기본'
+  };
+  // O3 매핑 (입간판 04-01 A형)
+  const O3_MAP = {
+    '04-01-001':'청소중','04-01-002':'공사중/수리','04-01-003':'안전/경고',
+    '04-01-004':'식당/카페/매장','04-01-005':'매장 운영',
+    '04-01-007':'주의/위험','04-01-008':'금지/출입금지',
+    '04-01-009':'주차/주차장','04-01-010':'CCTV(구버전)',
+    '04-01-011':'CCTV/금연/촬영','04-01-012':'학교/학원/교육',
+    '04-01-013':'기타/범용'
+  };
+  // 공간 코드 → 명칭 (체크박스 공간)
+  const SPACE_MAP = {
+    '02-01':'학교(초/중/고)','02-02':'유치원/학원','02-03':'대학교/연구소','02-04':'도서관/문화시설',
+    '03-01':'식당/카페','03-02':'미용/뷰티/헬스','03-03':'스포츠시설',
+    '04-01':'병원/의료기관/약국','04-02':'동물병원/펫샵',
+    '05-01':'공장/제조업','05-02':'물류/창고','05-03':'자동차 관련',
+    '06-01':'관공서','06-02':'공기업','06-03':'복지시설','06-04':'군/경시설',
+    '06-05':'소방서','06-06':'사법기관','06-07':'공영주차장',
+    '07-01':'소방업','07-02':'조경업','07-03':'보안업','07-04':'방역업',
+    '08-01':'마트/유통업','08-02':'아울렛','08-03':'백화점','08-04':'영화관/공연장'
+  };
+
+  // 코드 → "코드 명칭" 형태 변환
+  function labelO(code) {
+    if (!code) return '';
+    if (O3_MAP[code])  return `${code} ${O3_MAP[code]}`;
+    if (O2_MAP[code])  return `${code} ${O2_MAP[code]}`;
+    if (O1_MAP[code])  return `${code} ${O1_MAP[code]}`;
+    return code;
+  }
+  function labelSpace(code) {
+    return SPACE_MAP[code] ? `${code} ${SPACE_MAP[code]}` : code;
+  }
   const JUDGE_KR = {
     'OK':        {s:'정상',       d:'3차원 모두 정상',                     f:'-',                          p:0},
     'FIX_T':     {s:'업종 미연결', d:'업종 카테고리 미설정/부족',            f:'업종 9개 일괄 연결',           p:3},
@@ -650,8 +692,8 @@ async function main(){
     // 상품별 1차 라벨
     const o1 = (oCodes[0]||'').split('-')[0];
     const productType = O1_MAP[o1] || '-';
-    // 상품별 세부 (2차/3차)
-    const oDetail = oCodes.slice(1).join(' ') || '-';
+    // 상품별 세부 (2차/3차) · 코드 + 명칭
+    const oDetail = oCodes.slice(1).map(labelO).join(' · ') || '-';
     // 업종
     const tCodes = (r.t||'').split(',').filter(x=>x);
     const tLabels = tCodes.map(c => T1_MAP[c] || c).join(', ');
@@ -730,17 +772,18 @@ async function main(){
     }
     if (hasO) {
       if (llmO3) {
-        oProp = `🧠 + ${llmO3}${llmReason ? ' ('+llmReason.slice(0,30)+')' : ''}`;
+        oProp = `🧠 + ${labelO(llmO3)}${llmReason ? '\n(' + llmReason.slice(0,40) + ')' : ''}`;
       } else {
         const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
-        oProp = m ? `+ ${m[1]} 추가` : '상품별 3차 보완 필요 (LLM 판정 권장)';
+        oProp = m ? `+ ${labelO(m[1])}` : '상품별 3차 보완 필요 (🧠 LLM 판정 권장)';
       }
     }
     if (hasCB) {
       if (llmSpaces && llmSpaces.length) {
-        cbProp = `🧠 해제 후 ${llmSpaces.length}개 공간 재체크: ${llmSpaces.slice(0,6).join(', ')}${llmSpaces.length>6?' ...':''}`;
+        const labeled = llmSpaces.map(labelSpace);
+        cbProp = `🧠 해제 후 ${llmSpaces.length}개 공간 재체크:\n${labeled.slice(0,6).join('\n')}${llmSpaces.length>6?'\n...':''}`;
       } else {
-        cbProp = `0 (체크 ${r.cc||0}개 전체 해제 · LLM 판정 권장)`;
+        cbProp = `0 (체크 ${r.cc||0}개 전체 해제 · 🧠 LLM 판정 권장)`;
       }
     }
     return {oProp, tProp, cbProp, tCurrent};
@@ -1051,6 +1094,48 @@ JSON 배열만. 다른 텍스트·마크다운 금지.
 
   $('ha-llm-run').onclick = runLLMJudgeAll;
 
+  // ============ 백업 목록 조회 ============
+  $('ha-backup-list').onclick = () => {
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('hs_backup_')).sort().reverse();
+    if (!keys.length) {
+      alert('저장된 롤백 백업이 없습니다.\n(자동 수정 실행 시 자동 생성됩니다)');
+      return;
+    }
+    const lines = keys.map((k,i) => {
+      try {
+        const d = JSON.parse(localStorage.getItem(k));
+        return `${i+1}. ${d.ts} · 카테고리 ${d.category} · ${d.fix_count}건`;
+      } catch(e) { return `${i+1}. ${k} (파싱 실패)`; }
+    });
+    const sel = prompt(
+      `저장된 백업 (최근 10개):\n\n${lines.join('\n')}\n\n` +
+      `번호를 입력하면 JSON 파일로 다시 다운로드합니다.\n` +
+      `'삭제N' 입력 시 해당 백업 제거 (예: 삭제3)`,
+      '1'
+    );
+    if (!sel) return;
+    let idx;
+    if (sel.startsWith('삭제')) {
+      idx = parseInt(sel.replace('삭제','')) - 1;
+      if (idx >= 0 && idx < keys.length) {
+        if (confirm(`${keys[idx]} 삭제?`)) {
+          localStorage.removeItem(keys[idx]);
+          alert('삭제 완료');
+        }
+      }
+      return;
+    }
+    idx = parseInt(sel) - 1;
+    if (idx < 0 || idx >= keys.length) { alert('잘못된 번호'); return; }
+    const content = localStorage.getItem(keys[idx]);
+    const blob = new Blob([content], {type:'application/json;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = keys[idx].replace('hs_backup_','롤백백업_재다운로드_') + '.json';
+    a.click();
+    addLog('백업 재다운로드: ' + a.download, 'ok');
+  };
+
   // ============ 자동 수정 섹션 ============
   const fixItems = sorted.filter(r => r.judge && r.judge.startsWith('FIX'));
   if (fixItems.length > 0) {
@@ -1079,10 +1164,15 @@ JSON 배열만. 다른 텍스트·마크다운 금지.
 async function runAutoFix(fixItems) {
   const confirmMsg = `FIX 판정 ${fixItems.length}건을 자동 수정합니다.\n\n` +
     `• FIX_T: 업종 9개 일괄 연결\n` +
-    `• FIX_O: 상품별 3차 카테고리 추가 (기존 값은 유지)\n` +
-    `• FIX_CB: 관심분야 체크박스 전체 해제\n\n` +
-    `⚠️ 수정은 되돌릴 수 없습니다. 계속하시겠습니까?`;
+    `• FIX_O: 상품별 3차 카테고리 추가 (LLM/reason 우선)\n` +
+    `• FIX_CB: 체크박스 전체 해제 + LLM 공간 재체크\n\n` +
+    `🛡️ 수정 전에 롤백용 현재 상태 백업을 자동 다운로드합니다.\n` +
+    `⚠️ 수정은 되돌리기 어려우니 백업 파일을 꼭 보관하세요. 계속?`;
   if (!confirm(confirmMsg)) { addLog('자동 수정 취소', 'warn'); return; }
+
+  // ========== 🛡️ 롤백 백업 생성 ==========
+  try { autoFixBackup(fixItems); }
+  catch(e) { addLog('백업 생성 실패 (계속 진행): ' + e.message, 'warn'); }
 
   $('ha-fix-run').disabled = true;
   $('ha-fix-run').textContent = '수정 진행 중...';
@@ -1108,6 +1198,57 @@ async function runAutoFix(fixItems) {
   $('ha-fix-run').textContent = '수정 완료 · 재감사 권장';
   addLog(`🔧 자동 수정 완료 · 성공 ${okCnt} · 실패 ${errCnt}`, 'sys');
   alert(`자동 수정 완료\n성공: ${okCnt}건\n실패: ${errCnt}건\n\n재감사 권장합니다.`);
+}
+
+// 🛡️ 자동 수정 실행 직전 현재 상태 백업 · 파일 다운로드 + localStorage
+function autoFixBackup(fixItems) {
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const ts = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+  const backup = {
+    created_at: now.toISOString(),
+    ts,
+    backup_type: 'pre_autofix',
+    category: (window.HS_AUDIT_RESULT && window.HS_AUDIT_RESULT.config && window.HS_AUDIT_RESULT.config.cat) || '?',
+    fix_count: fixItems.length,
+    total_items: (window.HS_AUDIT_RESULT && window.HS_AUDIT_RESULT.items || []).length,
+    items: fixItems.map(it => ({
+      rgr: it.rgr,
+      name: it.name,
+      page: it.page,
+      judge: it.judge,
+      before: { o: it.o, t: it.t, cc: it.cc, ct: it.ct, cd: it.cd || {} },
+      planned: {
+        o3_add: it.llm_o3 || (it.reason && (it.reason.match(/O3:(\d{2}-\d{2}-\d{3})/)||[])[1]) || null,
+        spaces_recheck: it.llm_spaces || [],
+        llm_reason: it.llm_reason || '',
+      }
+    })),
+    // 참고: 전체 감사 스냅샷도 포함 (복원 시 대조용)
+    all_items_snapshot: (window.HS_AUDIT_RESULT && window.HS_AUDIT_RESULT.items || []).map(it => ({
+      rgr: it.rgr, o: it.o, t: it.t, cc: it.cc
+    })),
+  };
+  // 파일 다운로드
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `롤백백업_${backup.category}_${ts}.json`;
+  a.click();
+  // localStorage 보관 (최대 10개)
+  try {
+    const key = `hs_backup_${ts}`;
+    localStorage.setItem(key, JSON.stringify(backup));
+    const allKeys = Object.keys(localStorage).filter(k => k.startsWith('hs_backup_')).sort();
+    while (allKeys.length > 10) {
+      localStorage.removeItem(allKeys.shift());
+    }
+  } catch(e) { /* 저장 용량 초과 무시 */ }
+  // 로그
+  if (typeof addLog === 'function') {
+    addLog(`🛡️ 롤백 백업 생성: ${a.download} (localStorage + 파일)`, 'ok');
+  }
+  return backup;
 }
 
 async function fixOne(item) {
