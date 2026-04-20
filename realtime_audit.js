@@ -34,9 +34,11 @@ const CFG = Object.assign({
   pgCols: 5,               // 페이지 셀 한 줄 최대 개수 (넘으면 2줄)
 }, window.HS_AUDIT_CONFIG || {});
 
-// 기존 대시보드가 있으면 제거
+// 이전 실행의 타이머/DOM/iframe 완전 정리
+if (window.__hsAuditCleanup) { try { window.__hsAuditCleanup(); } catch(_){} }
 const prev = document.getElementById('hs-audit-root');
 if (prev) prev.remove();
+document.querySelectorAll('iframe[data-hs-audit="1"]').forEach(f => f.remove());
 
 // ================== UI 생성 ==================
 const root = document.createElement('div');
@@ -214,11 +216,20 @@ function fmtT(sec){const m=Math.floor(sec/60);const s=sec%60;return String(m).pa
 
 const startT = Date.now();
 const startStr = new Date().toTimeString().slice(0,8);
-$('ha-start-t').textContent = startStr;
+(function(){ const el = $('ha-start-t'); if (el) el.textContent = startStr; })();
 const clockTimer = setInterval(() => {
+  const el = $('ha-elapsed');
+  if (!el) { clearInterval(clockTimer); return; }
   const e = Math.floor((Date.now() - startT) / 1000);
-  $('ha-elapsed').textContent = fmtT(e);
+  el.textContent = fmtT(e);
 }, 200);
+// 전역 cleanup 등록 (다음 실행 시 자동 정리)
+window.__hsAuditCleanup = () => {
+  try { clearInterval(clockTimer); } catch(_){}
+  const rr = document.getElementById('hs-audit-root');
+  if (rr) rr.remove();
+  document.querySelectorAll('iframe[data-hs-audit="1"]').forEach(f => f.remove());
+};
 
 function setStep(n, pct) {
   for (let i = 1; i <= 4; i++) {
@@ -828,6 +839,7 @@ async function runAutoFix(fixItems) {
 
 async function fixOne(item) {
   const iframe = document.createElement('iframe');
+  iframe.setAttribute('data-hs-audit', '1');
   iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1024px;height:768px;border:0;pointer-events:none;opacity:0.01';
   iframe.src = `/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`;
   document.body.appendChild(iframe);
