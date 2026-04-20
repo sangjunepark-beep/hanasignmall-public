@@ -58,7 +58,7 @@ root.innerHTML = `
     padding: 12px 16px; background: #111827; border-bottom: 1px solid #1e293b;
     cursor: move;
   }
-  #hs-audit-root .ha-title { font-size: 13px; font-weight: 700; letter-spacing: -0.3px; }
+  #hs-audit-root .ha-title { font-size: calc(15px * var(--hs-scale, 1.5)); font-weight: 700; letter-spacing: -0.3px; }
   #hs-audit-root .ha-title .ha-live {
     display: inline-block; width: 7px; height: 7px; background: #22c55e;
     border-radius: 50%; margin-right: 6px; animation: ha-pulse 1.5s infinite;
@@ -67,7 +67,7 @@ root.innerHTML = `
   #hs-audit-root .ha-ctrl { display: flex; gap: 6px; }
   #hs-audit-root .ha-btn {
     background: #1e293b; color: #cbd5e1; border: 0; border-radius: 4px;
-    padding: 4px 8px; font-size: 11px; cursor: pointer;
+    padding: 6px 12px; font-size: calc(13px * var(--hs-scale, 1.5)); cursor: pointer;
   }
   #hs-audit-root .ha-btn:hover { background: #334155; }
   #hs-audit-root .ha-btn.primary { background: #3b82f6; color: #fff; }
@@ -78,8 +78,8 @@ root.innerHTML = `
 
   #hs-audit-root .ha-metrics { display: grid; grid-template-columns: repeat(5,1fr); gap: 6px; margin-bottom: 12px; }
   #hs-audit-root .ha-mc { background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; text-align: center; }
-  #hs-audit-root .ha-mc .l { font-size: 9px; color: #64748b; font-weight: 600; text-transform: uppercase; }
-  #hs-audit-root .ha-mc .v { font-size: 18px; font-weight: 700; margin-top: 2px; font-family: "SF Mono", monospace; }
+  #hs-audit-root .ha-mc .l { font-size: calc(11px * var(--hs-scale, 1.5)); color: #64748b; font-weight: 600; text-transform: uppercase; }
+  #hs-audit-root .ha-mc .v { font-size: calc(26px * var(--hs-scale, 1.5)); font-weight: 700; margin-top: 4px; font-family: "SF Mono", monospace; }
   #hs-audit-root .ha-mc.ok .v { color: #22c55e; }
   #hs-audit-root .ha-mc.warn .v { color: #f59e0b; }
   #hs-audit-root .ha-mc.err .v { color: #ef4444; }
@@ -89,18 +89,18 @@ root.innerHTML = `
   #hs-audit-root .ha-st { background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; position: relative; overflow: hidden; }
   #hs-audit-root .ha-st.active { border-color: #3b82f6; background: #0f1b33; }
   #hs-audit-root .ha-st.done { border-color: #22c55e; background: #0a1f13; }
-  #hs-audit-root .ha-st .n { font-size: 9px; color: #475569; font-weight: 700; }
-  #hs-audit-root .ha-st .t { font-size: 11px; font-weight: 600; margin-top: 2px; }
+  #hs-audit-root .ha-st .n { font-size: calc(11px * var(--hs-scale, 1.5)); color: #475569; font-weight: 700; }
+  #hs-audit-root .ha-st .t { font-size: calc(14px * var(--hs-scale, 1.5)); font-weight: 600; margin-top: 4px; }
   #hs-audit-root .ha-st.active .t { color: #60a5fa; }
   #hs-audit-root .ha-st.done .t { color: #86efac; }
   #hs-audit-root .ha-st .b { position: absolute; bottom: 0; left: 0; height: 2px; background: #3b82f6; width: 0; transition: width 0.2s; }
   #hs-audit-root .ha-st.done .b { width: 100% !important; background: #22c55e; }
 
   #hs-audit-root .ha-pg { display: grid; grid-template-columns: repeat(5,1fr); gap: 4px; margin-bottom: 10px; }
-  #hs-audit-root .ha-pgc { background: #0f172a; border: 1px solid #1e293b; border-radius: 4px; padding: 6px; text-align: center; font-size: 10px; }
+  #hs-audit-root .ha-pgc { background: #0f172a; border: 1px solid #1e293b; border-radius: 4px; padding: 8px; text-align: center; font-size: calc(12px * var(--hs-scale, 1.5)); }
   #hs-audit-root .ha-pgc.done { border-color: #16a34a; }
-  #hs-audit-root .ha-pgc .pn { color: #64748b; font-weight: 600; }
-  #hs-audit-root .ha-pgc .pc { color: #3b82f6; font-size: 14px; font-weight: 700; font-family: "SF Mono", monospace; }
+  #hs-audit-root .ha-pgc .pn { color: #64748b; font-weight: 600; font-size: calc(12px * var(--hs-scale, 1.5)); }
+  #hs-audit-root .ha-pgc .pc { color: #3b82f6; font-size: calc(18px * var(--hs-scale, 1.5)); font-weight: 700; font-family: "SF Mono", monospace; margin-top: 4px; }
   #hs-audit-root .ha-pgc.done .pc { color: #22c55e; }
 
   #hs-audit-root .ha-cur { background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; font-family: "SF Mono", monospace; font-size: calc(13px * var(--hs-scale, 1.5)); line-height: 1.7; min-height: 80px; margin-bottom: 10px; }
@@ -112,7 +112,7 @@ root.innerHTML = `
   #hs-audit-root .ha-cur .j.warn { background: #78350f; color: #fcd34d; }
   #hs-audit-root .ha-cur .j.err { background: #7f1d1d; color: #fca5a5; }
 
-  #hs-audit-root .ha-log { background: #020617; border: 1px solid #1e293b; border-radius: 6px; padding: 8px; height: calc(180px * var(--hs-scale, 1.5)); overflow-y: auto; font-family: "SF Mono", monospace; font-size: calc(14px * var(--hs-scale, 1.5)); line-height: 1.7; }
+  #hs-audit-root .ha-log { background: #020617; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; height: calc(180px * var(--hs-scale, 1.5)); overflow-y: auto; font-family: "SF Mono", monospace; font-size: calc(16px * var(--hs-scale, 1.5)); line-height: 1.7; }
   #hs-audit-root .ha-log .ln { margin-bottom: 2px; }
   #hs-audit-root .ha-log::-webkit-scrollbar { width: 5px; }
   #hs-audit-root .ha-log::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
@@ -127,8 +127,8 @@ root.innerHTML = `
 
   #hs-audit-root .ha-done-area { display: none; margin-top: 12px; padding: 12px; background: linear-gradient(135deg,#0f1b33,#132346); border: 1px solid #3b82f6; border-radius: 8px; }
   #hs-audit-root .ha-done-area.show { display: block; }
-  #hs-audit-root .ha-done-area .t { font-size: 11px; color: #60a5fa; font-weight: 600; margin-bottom: 6px; }
-  #hs-audit-root .ha-done-area .m { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
+  #hs-audit-root .ha-done-area .t { font-size: calc(13px * var(--hs-scale, 1.5)); color: #60a5fa; font-weight: 600; margin-bottom: 6px; }
+  #hs-audit-root .ha-done-area .m { font-size: calc(18px * var(--hs-scale, 1.5)); font-weight: 700; margin-bottom: 10px; }
   #hs-audit-root .ha-dl-row { display: flex; gap: 6px; }
 </style>
 
@@ -142,7 +142,7 @@ root.innerHTML = `
 </div>
 
 <div class="ha-body">
-  <div style="font-size:11px;color:#94a3b8;margin-bottom:10px" id="ha-sub">
+  <div style="font-size:calc(13px * var(--hs-scale, 1.5));color:#94a3b8;margin-bottom:12px" id="ha-sub">
     카테고리 ${CFG.cat} · ${Array.isArray(CFG.pages)?CFG.pages.length+'페이지':'전체 페이지 자동 감지'} · viewCnt=${CFG.viewCnt}
     · 시작시각 <span id="ha-start-t">--:--</span> · 경과 <span id="ha-elapsed">00:00</span>
   </div>
