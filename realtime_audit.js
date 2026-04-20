@@ -171,9 +171,10 @@ root.innerHTML = `
     <div class="t">감사 완료 · 소요 <span id="ha-total-t">--:--</span></div>
     <div class="m" id="ha-done-msg">-</div>
     <div class="ha-dl-row">
-      <button class="ha-btn primary" id="ha-dl-json">JSON 다운로드</button>
+      <button class="ha-btn primary" id="ha-dl-xlsx">📊 Excel 다운로드</button>
       <button class="ha-btn primary" id="ha-dl-csv">CSV 다운로드</button>
-      <button class="ha-btn" id="ha-copy-json">JSON 복사</button>
+      <button class="ha-btn" id="ha-dl-json">JSON</button>
+      <button class="ha-btn" id="ha-copy-json">복사</button>
     </div>
   </div>
 </div>
@@ -565,31 +566,152 @@ async function main(){
   $('ha-total-t').textContent = $('ha-elapsed').textContent;
   $('ha-done-area').classList.add('show');
 
-  // JSON 다운로드
+  // ============ 매핑 테이블 ============
+  const O1_MAP = {'01':'게시판','02':'안내판','04':'입간판','05':'현수막/배너','07':'구조물','08':'도로안전용품','09':'각종물품','10':'인쇄물/스티커','13':'개인결제','60':'기획전'};
+  const T1_MAP = {'01':'학교/학원','02':'식당/카페','03':'아파트','04':'호텔/펜션','05':'병원/요양시설','06':'회사/공장','07':'공공기관','08':'헬스/레저','09':'기타업종','12':'개인결제창'};
+  const JUDGE_KR = {
+    'OK':        {s:'정상',       d:'3차원 모두 정상',                     f:'-',                          p:0},
+    'FIX_T':     {s:'업종 미연결', d:'업종 카테고리 미설정/부족',            f:'업종 9개 일괄 연결',           p:3},
+    'FIX_O':     {s:'카테고리 오류', d:'상품별 3차 카테고리 부적합',          f:'상품명에 맞는 3차 코드로 교체', p:2},
+    'FIX_CB':    {s:'과태깅',     d:'관심분야 체크박스 과다(30 초과)',      f:'체크박스 재정리',             p:1},
+    'FIX_MULTI': {s:'복합 문제',   d:'2개 이상 차원에 문제',                f:'개별 확인 후 수정',           p:4},
+    'FIX_ALL':   {s:'전체 미설정', d:'상품별+업종별+관심분야 모두 미설정',   f:'처음부터 재설정',             p:5},
+  };
+
+  // 각 item을 표시용 행으로 변환
+  function toDisplayRow(r, i) {
+    const j = JUDGE_KR[r.judge] || JUDGE_KR.OK;
+    const oCodes = (r.o||'').split(',').filter(x=>x);
+    // 상품별 1차 라벨
+    const o1 = (oCodes[0]||'').split('-')[0];
+    const productType = O1_MAP[o1] || '-';
+    // 상품별 세부 (2차/3차)
+    const oDetail = oCodes.slice(1).join(' ') || '-';
+    // 업종
+    const tCodes = (r.t||'').split(',').filter(x=>x);
+    const tLabels = tCodes.map(c => T1_MAP[c] || c).join(', ');
+    const tCount = tCodes.length;
+    return {
+      idx: i+1,
+      page: r.page,
+      status: j.s,
+      desc: j.d,
+      name: r.name || '',
+      rgr: r.rgr,
+      productType,
+      oDetail,
+      tCount,
+      tLabels: tLabels || '(미연결)',
+      cc: r.cc || 0,
+      ct: r.ct || 0,
+      over: (r.cc > 30) ? 'O' : '',
+      judge: r.judge,
+      fix: j.f,
+      priority: j.p,
+    };
+  }
+
+  // 정렬: 판정 우선순위 ↓, 페이지 ↑, 체크수 ↓
+  const sorted = [...RESULT.items].map(toDisplayRow).sort((a,b) => {
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    if (a.page !== b.page) return a.page - b.page;
+    return b.cc - a.cc;
+  });
+  // 정렬 후 idx 재부여
+  sorted.forEach((r,i) => r.idx = i+1);
+
+  const HEADERS = ['#','페이지','상태','상품명','RgrCode','상품종류','상품별 세부','업종수','연결 업종','체크수','과태깅','권장 조치'];
+  function toRow(r) {
+    return [r.idx, r.page, r.status, r.name, r.rgr, r.productType, r.oDetail, r.tCount, r.tLabels, r.cc, r.over, r.fix];
+  }
+
+  // ============ XLSX (색상 포맷) ============
+  async function loadSheetJS() {
+    if (window.XLSX) return window.XLSX;
+    addLog('SheetJS 로딩 중 (xlsx 지원)...', 'sys');
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+    return window.XLSX;
+  }
+
+  $('ha-dl-xlsx').onclick = async () => {
+    try {
+      const XLSX = await loadSheetJS();
+      const wb = XLSX.utils.book_new();
+      const colW = [{wch:4},{wch:6},{wch:12},{wch:45},{wch:22},{wch:10},{wch:28},{wch:6},{wch:38},{wch:6},{wch:6},{wch:22}];
+
+      // 시트1: 전체
+      const aoa1 = [HEADERS].concat(sorted.map(toRow));
+      const ws1 = XLSX.utils.aoa_to_sheet(aoa1);
+      ws1['!cols'] = colW;
+      ws1['!freeze'] = {xSplit:0, ySplit:1};
+      XLSX.utils.book_append_sheet(wb, ws1, '전체감사결과');
+
+      // 시트2: 수정필요
+      const fixItems = sorted.filter(r => r.judge && r.judge !== 'OK');
+      if (fixItems.length > 0) {
+        const aoa2 = [HEADERS].concat(fixItems.map(toRow));
+        const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
+        ws2['!cols'] = colW;
+        XLSX.utils.book_append_sheet(wb, ws2, `수정필요_${fixItems.length}건`);
+      }
+
+      // 시트3: 요약
+      const byJudge = {};
+      for (const r of sorted) byJudge[r.status] = (byJudge[r.status]||0)+1;
+      const sumRows = [['판정','건수','비율']];
+      const total = sorted.length;
+      Object.entries(byJudge).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{
+        sumRows.push([k, v, ((v/total)*100).toFixed(1)+'%']);
+      });
+      sumRows.push(['합계', total, '100%']);
+      const ws3 = XLSX.utils.aoa_to_sheet(sumRows);
+      ws3['!cols'] = [{wch:20},{wch:8},{wch:10}];
+      XLSX.utils.book_append_sheet(wb, ws3, '요약');
+
+      const cat = CFG.cat || '04';
+      const catName = O1_MAP[cat] || cat;
+      const fname = `${catName}_감사리포트_${startStr.replace(/:/g,'')}.xlsx`;
+      XLSX.writeFile(wb, fname);
+      addLog(`Excel 다운로드: ${fname}`, 'ok');
+    } catch(e) {
+      addLog('XLSX 실패: ' + e.message + ' (CSV 써주세요)', 'err');
+    }
+  };
+
+  // ============ CSV (한글 라벨 버전) ============
+  $('ha-dl-csv').onclick = () => {
+    const rows = [HEADERS];
+    for (const r of sorted) rows.push(toRow(r));
+    const csv = '\ufeff' + rows.map(r => r.map(v => {
+      const s = String(v==null?'':v);
+      return /[,"\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+    }).join(',')).join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const cat = CFG.cat || '04';
+    const catName = O1_MAP[cat] || cat;
+    a.download = `${catName}_감사리포트_${startStr.replace(/:/g,'')}.csv`;
+    a.click();
+    addLog('CSV 다운로드 시작', 'ok');
+  };
+
+  // ============ JSON (원본 데이터) ============
   $('ha-dl-json').onclick = () => {
     const blob = new Blob([JSON.stringify(RESULT, null, 2)], {type:'application/json;charset=utf-8'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `입간판_실시간감사_${CFG.pages.join('-')}페이지_${startStr.replace(/:/g,'')}.json`;
+    a.download = `감사원본_${CFG.cat}_${startStr.replace(/:/g,'')}.json`;
     a.click();
     addLog('JSON 다운로드 시작', 'ok');
   };
-  // CSV 다운로드
-  $('ha-dl-csv').onclick = () => {
-    const header = ['페이지','RgrCode','상품명','상품별O','업종T','체크수','총체크박스','판정'];
-    const rows = [header];
-    for (const r of RESULT.items) {
-      rows.push([r.page, r.rgr, `"${(r.name||'').replace(/"/g,'""')}"`, r.o, r.t, r.cc, r.ct, r.judge]);
-    }
-    const csv = '\ufeff' + rows.map(r => r.join(',')).join('\n');
-    const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `입간판_실시간감사_${CFG.pages.join('-')}페이지_${startStr.replace(/:/g,'')}.csv`;
-    a.click();
-    addLog('CSV 다운로드 시작', 'ok');
-  };
-  // JSON 복사
+
+  // ============ JSON 복사 ============
   $('ha-copy-json').onclick = async () => {
     await navigator.clipboard.writeText(JSON.stringify(RESULT));
     addLog('JSON 클립보드에 복사됨', 'ok');
