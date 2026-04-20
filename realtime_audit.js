@@ -29,7 +29,7 @@ const CFG = Object.assign({
   batch: 10,               // fetch 병렬 묶음
   pace: 200,               // 각 상품 UI 업데이트 후 지연 (ms)
   batchGap: 300,           // 배치 간 간격 (ms)
-  scale: 2.25,             // 대시보드 크기 배율 (1=기본, 2.25=225%)
+  scale: 1.125,            // 대시보드 크기 배율 (기본 112.5%)
 }, window.HS_AUDIT_CONFIG || {});
 
 // 기존 대시보드가 있으면 제거
@@ -103,11 +103,11 @@ root.innerHTML = `
   #hs-audit-root .ha-pgc .pc { color: #3b82f6; font-size: calc(18px * var(--hs-scale, 1.5)); font-weight: 700; font-family: "SF Mono", monospace; margin-top: 4px; }
   #hs-audit-root .ha-pgc.done .pc { color: #22c55e; }
 
-  #hs-audit-root .ha-cur { background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; padding: 10px; font-family: "SF Mono", monospace; font-size: calc(13px * var(--hs-scale, 1.5)); line-height: 1.7; min-height: 80px; margin-bottom: 10px; }
+  #hs-audit-root .ha-cur { background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; padding: 14px; font-family: "SF Mono", monospace; font-size: calc(18px * var(--hs-scale, 1.5)); line-height: 1.8; min-height: 120px; margin-bottom: 12px; }
   #hs-audit-root .ha-cur .l { color: #64748b; font-weight: 600; }
   #hs-audit-root .ha-cur .c { color: #60a5fa; }
   #hs-audit-root .ha-cur .n { color: #fbbf24; }
-  #hs-audit-root .ha-cur .j { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; margin-left: 6px; }
+  #hs-audit-root .ha-cur .j { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: calc(14px * var(--hs-scale, 1.5)); font-weight: 700; margin-left: 8px; }
   #hs-audit-root .ha-cur .j.ok { background: #14532d; color: #86efac; }
   #hs-audit-root .ha-cur .j.warn { background: #78350f; color: #fcd34d; }
   #hs-audit-root .ha-cur .j.err { background: #7f1d1d; color: #fca5a5; }
