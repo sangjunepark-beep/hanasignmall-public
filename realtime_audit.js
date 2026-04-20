@@ -129,6 +129,16 @@ root.innerHTML = `
   #hs-audit-root .ha-log .ln.sys .lv { color: #a855f7; }
 
   #hs-audit-root .ha-done-area { display: none; margin-top: 12px; padding: 12px; background: linear-gradient(135deg,#0f1b33,#132346); border: 1px solid #3b82f6; border-radius: 8px; }
+  #hs-audit-root .ha-fix-area { display: none; margin-top: 12px; padding: 14px; background: linear-gradient(135deg,#2d1b0e,#3d2415); border: 1px solid #d97706; border-radius: 8px; }
+  #hs-audit-root .ha-fix-area.show { display: block; }
+  #hs-audit-root .ha-fix-title { font-size: calc(15px * var(--hs-scale, 1.5)); color: #fbbf24; font-weight: 700; margin-bottom: 10px; }
+  #hs-audit-root .ha-fix-stats { font-size: calc(13px * var(--hs-scale, 1.5)); color: #fde68a; margin-bottom: 12px; font-family: "SF Mono", monospace; }
+  #hs-audit-root .ha-fix-btn { background: #dc2626; color: #fff; border: 0; border-radius: 6px; padding: 10px 16px; font-size: calc(13px * var(--hs-scale, 1.5)); font-weight: 700; cursor: pointer; }
+  #hs-audit-root .ha-fix-btn:hover { background: #991b1b; }
+  #hs-audit-root .ha-fix-btn:disabled { background: #44403c; color: #a8a29e; cursor: not-allowed; }
+  #hs-audit-root .ha-fix-progress { margin-top: 12px; font-size: calc(12px * var(--hs-scale, 1.5)); color: #fcd34d; display: none; }
+  #hs-audit-root .ha-fix-progress.show { display: block; }
+  #hs-audit-root .ha-fix-progress .pct { font-family: "SF Mono", monospace; font-size: calc(16px * var(--hs-scale, 1.5)); font-weight: 700; color: #fbbf24; }
   #hs-audit-root .ha-done-area.show { display: block; }
   #hs-audit-root .ha-done-area .t { font-size: calc(13px * var(--hs-scale, 1.5)); color: #60a5fa; font-weight: 600; margin-bottom: 6px; }
   #hs-audit-root .ha-done-area .m { font-size: calc(18px * var(--hs-scale, 1.5)); font-weight: 700; margin-bottom: 10px; }
@@ -179,6 +189,16 @@ root.innerHTML = `
       <button class="ha-btn primary" id="ha-dl-csv">CSV 다운로드</button>
       <button class="ha-btn" id="ha-dl-json">JSON</button>
       <button class="ha-btn" id="ha-copy-json">복사</button>
+    </div>
+  </div>
+
+  <div class="ha-fix-area" id="ha-fix-area">
+    <div class="ha-fix-title">🔧 자동 수정 실행</div>
+    <div class="ha-fix-stats" id="ha-fix-stats">-</div>
+    <button class="ha-fix-btn" id="ha-fix-run">일괄 자동 수정 실행</button>
+    <div class="ha-fix-progress" id="ha-fix-progress">
+      <div>진행: <span class="pct" id="ha-fix-pct">0%</span> · <span id="ha-fix-done">0</span>/<span id="ha-fix-total">0</span>건 처리</div>
+      <div id="ha-fix-curr" style="margin-top:6px;font-family:'SF Mono',monospace;font-size:calc(12px * var(--hs-scale, 1.5));color:#fde68a"></div>
     </div>
   </div>
 </div>
@@ -722,10 +742,160 @@ async function main(){
     addLog('JSON 클립보드에 복사됨', 'ok');
   };
 
+  // ============ 자동 수정 섹션 ============
+  const fixItems = sorted.filter(r => r.judge && r.judge.startsWith('FIX'));
+  if (fixItems.length > 0) {
+    const byJ = {};
+    for (const r of fixItems) byJ[r.judge] = (byJ[r.judge]||0) + 1;
+    const statsParts = [];
+    if (byJ.FIX_T)     statsParts.push(`FIX_T ${byJ.FIX_T}건 (업종 9개 연결)`);
+    if (byJ.FIX_O)     statsParts.push(`FIX_O ${byJ.FIX_O}건 (상품별 3차 추가)`);
+    if (byJ.FIX_CB)    statsParts.push(`FIX_CB ${byJ.FIX_CB}건 (체크박스 전체 해제)`);
+    if (byJ.FIX_MULTI) statsParts.push(`FIX_MULTI ${byJ.FIX_MULTI}건`);
+    if (byJ.FIX_ALL)   statsParts.push(`FIX_ALL ${byJ.FIX_ALL}건`);
+    $('ha-fix-stats').innerHTML = `수정 대상 <b>${fixItems.length}건</b><br>` + statsParts.join(' · ');
+    $('ha-fix-area').classList.add('show');
+    $('ha-fix-total').textContent = fixItems.length;
+    $('ha-fix-run').onclick = () => runAutoFix(fixItems);
+  }
+
   setStep(4, 100);
   for (let i = 1; i <= 4; i++) $('ha-s'+i).classList.add('done');
   addLog('파이프라인 종료. 다운로드 버튼 활성', 'sys');
+  if (fixItems.length > 0) addLog(`자동 수정 대기: ${fixItems.length}건 (🔧 버튼 클릭)`, 'warn');
   clearInterval(clockTimer);
+}
+
+// ==================== 자동 수정 로직 ====================
+async function runAutoFix(fixItems) {
+  const confirmMsg = `FIX 판정 ${fixItems.length}건을 자동 수정합니다.\n\n` +
+    `• FIX_T: 업종 9개 일괄 연결\n` +
+    `• FIX_O: 상품별 3차 카테고리 추가 (기존 값은 유지)\n` +
+    `• FIX_CB: 관심분야 체크박스 전체 해제\n\n` +
+    `⚠️ 수정은 되돌릴 수 없습니다. 계속하시겠습니까?`;
+  if (!confirm(confirmMsg)) { addLog('자동 수정 취소', 'warn'); return; }
+
+  $('ha-fix-run').disabled = true;
+  $('ha-fix-run').textContent = '수정 진행 중...';
+  $('ha-fix-progress').classList.add('show');
+  addLog(`🔧 자동 수정 시작 (${fixItems.length}건)`, 'sys');
+
+  let done = 0, okCnt = 0, errCnt = 0;
+  for (const item of fixItems) {
+    $('ha-fix-curr').textContent = `처리 중: ${item.rgr} · ${item.name.slice(0,30)} [${item.judge}]`;
+    try {
+      const r = await fixOne(item);
+      addLog(`[FIX] ${item.rgr} → ${item.judge} · ${r}`, 'ok');
+      okCnt++;
+    } catch(e) {
+      addLog(`[FIX ERR] ${item.rgr}: ${e.message}`, 'err');
+      errCnt++;
+    }
+    done++;
+    $('ha-fix-done').textContent = done;
+    $('ha-fix-pct').textContent = Math.round(done/fixItems.length*100) + '%';
+  }
+  $('ha-fix-curr').textContent = `완료 · 성공 ${okCnt} · 실패 ${errCnt}`;
+  $('ha-fix-run').textContent = '수정 완료 · 재감사 권장';
+  addLog(`🔧 자동 수정 완료 · 성공 ${okCnt} · 실패 ${errCnt}`, 'sys');
+  alert(`자동 수정 완료\n성공: ${okCnt}건\n실패: ${errCnt}건\n\n재감사 권장합니다.`);
+}
+
+async function fixOne(item) {
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1024px;height:768px;border:0;pointer-events:none;opacity:0.01';
+  iframe.src = `/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`;
+  document.body.appendChild(iframe);
+  try {
+    await new Promise((res, rej) => {
+      const t = setTimeout(()=>rej(new Error('iframe 로드 타임아웃')), 20000);
+      iframe.onload = () => { clearTimeout(t); res(); };
+    });
+    // JS 초기화 대기 (catO/T select 서버값 적용 포함)
+    await new Promise(r => setTimeout(r, 2500));
+    const doc = iframe.contentDocument;
+    const results = [];
+
+    const judge = item.judge;
+    const isT  = judge === 'FIX_T'  || judge === 'FIX_ALL' || judge === 'FIX_MULTI';
+    const isO  = judge === 'FIX_O'  || judge === 'FIX_ALL' || judge === 'FIX_MULTI';
+    const isCB = judge === 'FIX_CB' || judge === 'FIX_ALL' || judge === 'FIX_MULTI';
+
+    // 현재 연결된 업종 읽기
+    const connectedT = new Set();
+    for (let i=1; i<=30; i++) {
+      const h = doc.querySelector(`input[name="SelectCatoryCodeTwo_${i}"]`);
+      if (h && h.value) connectedT.add(h.value.split('^')[0]);
+    }
+
+    if (isT) {
+      const missing = ['01','02','03','04','05','06','07','08','09'].filter(c => !connectedT.has(c));
+      if (missing.length) {
+        for (const code of missing) {
+          const t1 = doc.getElementById('CateCodeT_1');
+          if (!t1) break;
+          t1.value = code;
+          t1.dispatchEvent(new Event('change'));
+          await new Promise(r => setTimeout(r, 400));
+          const btn = Array.from(doc.querySelectorAll('button')).find(b => {
+            const oc = b.getAttribute('onclick') || '';
+            return oc.includes('CateCodeT_4') && oc.includes("'2'");
+          });
+          if (btn) btn.click();
+          await new Promise(r => setTimeout(r, 500));
+        }
+        results.push(`T+${missing.length}업종`);
+      } else {
+        results.push('T이미완료');
+      }
+    }
+
+    if (isCB) {
+      const CBR = /^(\d{2})`\d`(\d{2}-\d{2})`/;
+      const checked = Array.from(doc.querySelectorAll('input[type="checkbox"]:checked')).filter(x => CBR.test(x.value||''));
+      for (let i=0; i<checked.length; i++) {
+        checked[i].click();
+        if ((i+1) % 30 === 0) await new Promise(r => setTimeout(r, 400));
+        else await new Promise(r => setTimeout(r, 80));
+      }
+      results.push(`CB-${checked.length}`);
+    }
+
+    if (isO && item.reason && item.reason.includes('O3')) {
+      // item.reason 에서 기대 catO3 코드 추출 (예: "O3:04-01-011")
+      const m = item.reason.match(/O3:(\d{2}-\d{2}-\d{3})/);
+      if (m) {
+        const expectO3 = m[1];
+        const parts = expectO3.split('-');
+        const c1 = parts[0];
+        const c2 = parts[0]+'-'+parts[1];
+        const c3 = expectO3;
+        // catO1
+        let sel = doc.getElementById('CateCodeO_1');
+        if (sel) { sel.value = c1; sel.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 600)); }
+        sel = doc.getElementById('CateCodeO_2');
+        if (sel) { sel.value = c2; sel.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 600)); }
+        sel = doc.getElementById('CateCodeO_3');
+        if (sel) { sel.value = c3; sel.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 400)); }
+        // 상품별 추가 버튼 클릭
+        const btn = Array.from(doc.querySelectorAll('button')).find(b => {
+          const oc = b.getAttribute('onclick') || '';
+          return oc.includes('CateCodeO_4') && oc.includes("'1'");
+        });
+        if (btn) {
+          btn.click();
+          await new Promise(r => setTimeout(r, 800));
+          results.push(`O+${c3}`);
+        } else {
+          results.push('O:버튼없음');
+        }
+      }
+    }
+
+    return results.join(',') || '변경없음';
+  } finally {
+    iframe.remove();
+  }
 }
 
 main().catch(e => addLog('치명적 오류: ' + e.message, 'err'));
