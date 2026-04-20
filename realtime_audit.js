@@ -192,6 +192,10 @@ root.innerHTML = `
       <button class="ha-btn" id="ha-dl-json">JSON</button>
       <button class="ha-btn" id="ha-copy-json">복사</button>
     </div>
+    <div class="ha-dl-row" style="margin-top:10px">
+      <button class="ha-btn" style="background:#581c87;color:#fff" id="ha-llm-run">🧠 LLM 판정 실행</button>
+      <span id="ha-llm-status" style="font-size:calc(12px * var(--hs-scale, 1.5));color:#c4b5fd;margin-left:8px"></span>
+    </div>
   </div>
 
   <div class="ha-fix-area" id="ha-fix-area">
@@ -702,7 +706,7 @@ async function main(){
     return window.XLSX;
   }
 
-  // 판정 → 제안(제안 변경값) 계산
+  // 판정 → 제안(제안 변경값) 계산 · LLM 결과 우선
   function buildProposal(r) {
     const tCodes = (r.t||'').split(',').filter(x=>x);
     const tCurrent = tCodes.length ? tCodes.map(c=>T1_MAP[c]||c).join(', ') : '(미연결)';
@@ -711,6 +715,13 @@ async function main(){
     const hasT = ['FIX_T','FIX_ALL','FIX_MULTI'].includes(j);
     const hasO = ['FIX_O','FIX_ALL','FIX_MULTI'].includes(j);
     const hasCB = ['FIX_CB','FIX_ALL','FIX_MULTI'].includes(j);
+
+    // LLM 결과 있으면 우선 사용
+    const orig = RESULT.items.find(x => x.rgr === r.rgr);
+    const llmO3 = orig && orig.llm_o3;
+    const llmSpaces = orig && orig.llm_spaces;
+    const llmReason = orig && orig.llm_reason;
+
     if (hasT) {
       const allT = ['01','02','03','04','05','06','07','08','09'];
       const missing = allT.filter(c => !tCodes.includes(c));
@@ -718,12 +729,19 @@ async function main(){
       else tProp = '유지';
     }
     if (hasO) {
-      const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
-      if (m) oProp = `+ ${m[1]} 추가`;
-      else oProp = '상품별 3차 보완 필요';
+      if (llmO3) {
+        oProp = `🧠 + ${llmO3}${llmReason ? ' ('+llmReason.slice(0,30)+')' : ''}`;
+      } else {
+        const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
+        oProp = m ? `+ ${m[1]} 추가` : '상품별 3차 보완 필요 (LLM 판정 권장)';
+      }
     }
     if (hasCB) {
-      cbProp = `0 (체크 ${r.cc||0}개 전체 해제 · 이후 재설정 수동)`;
+      if (llmSpaces && llmSpaces.length) {
+        cbProp = `🧠 해제 후 ${llmSpaces.length}개 공간 재체크: ${llmSpaces.slice(0,6).join(', ')}${llmSpaces.length>6?' ...':''}`;
+      } else {
+        cbProp = `0 (체크 ${r.cc||0}개 전체 해제 · LLM 판정 권장)`;
+      }
     }
     return {oProp, tProp, cbProp, tCurrent};
   }
@@ -905,6 +923,134 @@ async function main(){
     addLog('JSON 클립보드에 복사됨', 'ok');
   };
 
+  // ============ LLM 판정 (Claude Haiku) ============
+  function getApiKey() {
+    return sessionStorage.getItem('hs_anthropic_key') || localStorage.getItem('hs_anthropic_key') || '';
+  }
+
+  const LLM_SYSTEM = `당신은 하나사인몰 어드민 카테고리 정리 도우미입니다.
+입간판·안내판 등 사인물 상품의 상품명을 보고 적합한 '상품별 3차 코드(O3)'와 '체크할 공간 코드 목록'을 JSON으로 반환하세요.
+
+[상품별 3차 코드 참고 - 입간판(04-01 A형)]
+04-01-001 청소중
+04-01-002 공사중/수리
+04-01-003 안전/경고
+04-01-004 식당/카페/매장
+04-01-005 매장운영
+04-01-007 주의/위험/주차금지/보행주의
+04-01-008 금지/출입금지/반려동물 등
+04-01-009 주차/주차장
+04-01-011 CCTV/금연/촬영/방역
+04-01-012 학교/학원/교육
+04-01-013 기타(부동산, 분묘, 공통안내 등)
+
+[공간 코드 체계 (체크박스 prefix 02~08)]
+02 학교군: 02-01 학교(초/중/고), 02-02 유치원/학원, 02-03 대학교/연구소, 02-04 도서관/문화시설
+03 식당/서비스군: 03-01 식당/카페, 03-02 미용/뷰티/헬스, 03-03 스포츠시설
+04 의료군: 04-01 병원/의료기관/약국, 04-02 동물병원/펫샵
+05 산업군: 05-01 공장/제조업, 05-02 물류/창고, 05-03 자동차 관련
+06 공공/복지군: 06-01 관공서, 06-02 공기업, 06-03 복지시설, 06-04 군/경시설, 06-05 소방서, 06-06 사법기관, 06-07 공영주차장
+07 전문서비스업: 07-01 소방업, 07-02 조경업, 07-03 보안업, 07-04 방역업
+08 유통/상업군: 08-01 마트/유통업, 08-02 아울렛, 08-03 백화점, 08-04 영화관/공연장/놀이공원
+
+[판단 원칙]
+- 상품명에서 사용 용도/공간을 파악.
+- "주차/요일제/오뚜기" → 주차 관련 (O3=04-01-009, 공간: 06-07 공영주차장 + 업종별 주차장).
+- "CCTV/금연/촬영" → 04-01-011, 전업종 관련 공간.
+- "학교/학원/초등" → 04-01-012, 02 학교군.
+- "식당/카페/테이크아웃/선불" → 04-01-004, 03-01.
+- "부동산/분묘/매매" → 04-01-013(기타), 업종 특정 어려우면 06(공공) + 07(전문서비스업).
+- "안전작업/지게차/공사" → 04-01-002 or 04-01-003, 05 산업군.
+- 확실치 않으면 o3="04-01-013"(기타), spaces는 상품명 힌트 기반 2~6개 선별.
+
+[출력 형식]
+JSON 배열만. 다른 텍스트·마크다운 금지.
+[
+  {"rgr":"240104151418_8287","o3":"04-01-009","spaces":["05-03","06-07","02-01"],"reason":"차량 요일제 주차"},
+  ...
+]`;
+
+  function buildUserPrompt(batch){
+    const lines = batch.map((r,i) => `${i+1}. [${r.rgr}] ${r.name} (현재 O=${r.o||'-'} · T=${r.t||'미연결'} · cc=${r.cc||0})`);
+    return `다음 상품들에 대해 JSON 배열로 답하세요.\n\n${lines.join('\n')}`;
+  }
+
+  async function callClaude(apiKey, userPrompt){
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{
+        'content-type':'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true',
+      },
+      body: JSON.stringify({
+        model:'claude-haiku-4-5-20251001',
+        max_tokens: 2048,
+        system: LLM_SYSTEM,
+        messages: [{role:'user', content: userPrompt}],
+      }),
+    });
+    if (!res.ok) throw new Error('API ' + res.status + ': ' + (await res.text()).slice(0,200));
+    const j = await res.json();
+    return j.content[0].text;
+  }
+
+  function extractJSON(text){
+    // 본문에서 JSON 배열 추출
+    const m = text.match(/\[[\s\S]*\]/);
+    if (!m) throw new Error('JSON 배열 못 찾음: ' + text.slice(0, 100));
+    return JSON.parse(m[0]);
+  }
+
+  async function runLLMJudgeAll() {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      alert('Claude API 키가 없습니다. sessionStorage.setItem("hs_anthropic_key", "sk-ant-...")로 저장하세요.');
+      return;
+    }
+    // FIX 판정 상품 대상 (OK는 스킵)
+    const targets = RESULT.items.filter(it => it.judge && it.judge !== 'OK');
+    if (!targets.length) { addLog('LLM 판정 대상 없음 (FIX 없음)', 'warn'); return; }
+
+    $('ha-llm-run').disabled = true;
+    $('ha-llm-run').textContent = 'LLM 판정 중...';
+    const BATCH = 8;
+    let done = 0, fail = 0;
+    addLog(`🧠 LLM 판정 시작 · 대상 ${targets.length}건 · 배치 ${BATCH}개`, 'sys');
+
+    for (let i = 0; i < targets.length; i += BATCH) {
+      const batch = targets.slice(i, i + BATCH);
+      $('ha-llm-status').textContent = `${done}/${targets.length} 처리 중...`;
+      try {
+        const text = await callClaude(apiKey, buildUserPrompt(batch));
+        const arr = extractJSON(text);
+        for (const a of arr) {
+          const it = RESULT.items.find(x => x.rgr === a.rgr);
+          if (it) {
+            it.llm_o3 = a.o3;
+            it.llm_spaces = a.spaces || [];
+            it.llm_reason = a.reason || '';
+            done++;
+          }
+        }
+        addLog(`[LLM] 배치 ${i/BATCH+1} · ${batch.length}건 판정 완료`, 'ok');
+      } catch(e) {
+        addLog(`[LLM ERR] 배치 ${i/BATCH+1}: ${e.message}`, 'err');
+        fail += batch.length;
+      }
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    $('ha-llm-run').disabled = false;
+    $('ha-llm-run').textContent = '🧠 LLM 판정 완료';
+    $('ha-llm-status').textContent = `완료 · 성공 ${done} · 실패 ${fail}`;
+    addLog(`🧠 LLM 판정 종료 · 성공 ${done} · 실패 ${fail}`, 'ok');
+    alert(`LLM 판정 완료\n성공: ${done}건 · 실패: ${fail}건\n\nExcel 다시 다운로드하면 LLM 결과가 제안 컬럼에 반영됩니다.\n자동 수정도 LLM 결과를 사용합니다.`);
+  }
+
+  $('ha-llm-run').onclick = runLLMJudgeAll;
+
   // ============ 자동 수정 섹션 ============
   const fixItems = sorted.filter(r => r.judge && r.judge.startsWith('FIX'));
   if (fixItems.length > 0) {
@@ -1016,20 +1162,42 @@ async function fixOne(item) {
 
     if (isCB) {
       const CBR = /^(\d{2})`\d`(\d{2}-\d{2})`/;
+      // 1) 기존 체크 전부 해제
       const checked = Array.from(doc.querySelectorAll('input[type="checkbox"]:checked')).filter(x => CBR.test(x.value||''));
       for (let i=0; i<checked.length; i++) {
         checked[i].click();
         if ((i+1) % 30 === 0) await new Promise(r => setTimeout(r, 400));
         else await new Promise(r => setTimeout(r, 80));
       }
-      results.push(`CB-${checked.length}`);
+      // 2) LLM 제안 공간 있으면 재체크
+      if (item.llm_spaces && item.llm_spaces.length) {
+        await new Promise(r => setTimeout(r, 500));
+        let recheck = 0;
+        const allCb = Array.from(doc.querySelectorAll('input[type="checkbox"]')).filter(x => CBR.test(x.value||''));
+        for (const target of item.llm_spaces) {
+          // value 패턴: XX`d`target` (예: 05`5`05-01`)
+          const cands = allCb.filter(x => {
+            const m = (x.value||'').match(CBR);
+            return m && m[2] === target;
+          });
+          for (const c of cands) {
+            if (!c.checked) { c.click(); recheck++; await new Promise(r => setTimeout(r, 80)); }
+          }
+        }
+        results.push(`CB-${checked.length}+${recheck}`);
+      } else {
+        results.push(`CB-${checked.length}`);
+      }
     }
 
-    if (isO && item.reason && item.reason.includes('O3')) {
-      // item.reason 에서 기대 catO3 코드 추출 (예: "O3:04-01-011")
-      const m = item.reason.match(/O3:(\d{2}-\d{2}-\d{3})/);
-      if (m) {
-        const expectO3 = m[1];
+    if (isO && (item.llm_o3 || (item.reason && item.reason.includes('O3')))) {
+      // LLM 결과 우선, 없으면 reason에서 추출
+      let expectO3 = item.llm_o3;
+      if (!expectO3) {
+        const m = item.reason.match(/O3:(\d{2}-\d{2}-\d{3})/);
+        if (m) expectO3 = m[1];
+      }
+      if (expectO3) {
         const parts = expectO3.split('-');
         const c1 = parts[0];
         const c2 = parts[0]+'-'+parts[1];
