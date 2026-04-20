@@ -29,7 +29,7 @@ const CFG = Object.assign({
   batch: 10,               // fetch 병렬 묶음
   pace: 200,               // 각 상품 UI 업데이트 후 지연 (ms)
   batchGap: 300,           // 배치 간 간격 (ms)
-  scale: 1.5,              // 대시보드 크기 배율 (1=기본, 1.5=150%, 2=200%)
+  scale: 2.25,             // 대시보드 크기 배율 (1=기본, 2.25=225%)
 }, window.HS_AUDIT_CONFIG || {});
 
 // 기존 대시보드가 있으면 제거
