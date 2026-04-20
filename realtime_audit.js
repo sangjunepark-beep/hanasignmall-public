@@ -686,52 +686,179 @@ async function main(){
     return [r.idx, r.page, r.status, r.name, r.rgr, r.productType, r.oDetail, r.tCount, r.tLabels, r.cc, r.over, r.fix];
   }
 
-  // ============ XLSX (색상 포맷) ============
+  // ============ XLSX (스타일 지원: xlsx-js-style) ============
   async function loadSheetJS() {
-    if (window.XLSX) return window.XLSX;
-    addLog('SheetJS 로딩 중 (xlsx 지원)...', 'sys');
+    if (window.XLSX && window.XLSX.__hs_styled) return window.XLSX;
+    addLog('xlsx-js-style 로딩 중 (색상 지원)...', 'sys');
+    // 기존 XLSX 있어도 스타일 미지원이면 교체 시도
+    if (window.XLSX && !window.XLSX.__hs_styled) { try { delete window.XLSX; } catch(_){} }
     await new Promise((res, rej) => {
       const s = document.createElement('script');
-      s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+      s.src = 'https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';
       s.onload = res; s.onerror = rej;
       document.head.appendChild(s);
     });
+    if (window.XLSX) window.XLSX.__hs_styled = true;
     return window.XLSX;
   }
+
+  // 판정 → 제안(제안 변경값) 계산
+  function buildProposal(r) {
+    const tCodes = (r.t||'').split(',').filter(x=>x);
+    const tCurrent = tCodes.length ? tCodes.map(c=>T1_MAP[c]||c).join(', ') : '(미연결)';
+    let oProp = '-', tProp = '-', cbProp = '-';
+    const j = r.judge || 'OK';
+    const hasT = ['FIX_T','FIX_ALL','FIX_MULTI'].includes(j);
+    const hasO = ['FIX_O','FIX_ALL','FIX_MULTI'].includes(j);
+    const hasCB = ['FIX_CB','FIX_ALL','FIX_MULTI'].includes(j);
+    if (hasT) {
+      const allT = ['01','02','03','04','05','06','07','08','09'];
+      const missing = allT.filter(c => !tCodes.includes(c));
+      if (missing.length) tProp = `9업종 전체 연결 (${missing.length}개 추가: ${missing.map(c=>T1_MAP[c]).join(', ')})`;
+      else tProp = '유지';
+    }
+    if (hasO) {
+      const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
+      if (m) oProp = `+ ${m[1]} 추가`;
+      else oProp = '상품별 3차 보완 필요';
+    }
+    if (hasCB) {
+      cbProp = `0 (체크 ${r.cc||0}개 전체 해제 · 이후 재설정 수동)`;
+    }
+    return {oProp, tProp, cbProp, tCurrent};
+  }
+
+  // 스타일 헬퍼
+  const STATUS_STYLE = {
+    '정상':        {fill:'C6EFCE', font:'006100'},
+    '과태깅':      {fill:'FFEB9C', font:'9C5700'},
+    '업종 미연결':  {fill:'FFC7CE', font:'9C0006'},
+    '카테고리 오류': {fill:'FFD580', font:'9C5700'},
+    '복합 문제':   {fill:'F8CBAD', font:'9C0006'},
+    '전체 미설정':  {fill:'F8CBAD', font:'9C0006'},
+  };
+  function styleCell(text, opts){
+    const s = {
+      font: {name:'맑은 고딕', sz: opts && opts.fontSize || 11, bold: !!(opts&&opts.bold), color: opts && opts.fontColor ? {rgb: opts.fontColor} : undefined},
+      alignment: {vertical:'center', horizontal: opts && opts.align || 'left', wrapText: !!(opts&&opts.wrap)},
+      border: {
+        top:    {style:'thin', color:{rgb:'D0D0D0'}},
+        bottom: {style:'thin', color:{rgb:'D0D0D0'}},
+        left:   {style:'thin', color:{rgb:'D0D0D0'}},
+        right:  {style:'thin', color:{rgb:'D0D0D0'}},
+      },
+    };
+    if (opts && opts.fill) s.fill = {patternType:'solid', fgColor:{rgb: opts.fill}};
+    return {v: text == null ? '' : text, t: typeof text === 'number' ? 'n' : 's', s};
+  }
+  const HEAD_STYLE = {fill:'305496', fontColor:'FFFFFF', bold:true, align:'center'};
+  const CURR_STYLE_OK  = {fill:'F2F2F2'};                                 // 변경 없음(회색)
+  const CURR_STYLE_BAD = {fill:'FBE5D6', fontColor:'9C0006'};              // 현재 문제 있음(연살구)
+  const PROP_STYLE_FIX = {fill:'E2EFDA', fontColor:'006100', bold:true};   // 제안(연녹)
+  const PROP_STYLE_NONE= {fill:'F2F2F2', fontColor:'808080'};              // 제안 없음(회색)
 
   $('ha-dl-xlsx').onclick = async () => {
     try {
       const XLSX = await loadSheetJS();
       const wb = XLSX.utils.book_new();
-      const colW = [{wch:4},{wch:6},{wch:12},{wch:45},{wch:22},{wch:10},{wch:28},{wch:6},{wch:38},{wch:6},{wch:6},{wch:22}];
+
+      // 헤더 정의 (before/after 비교)
+      const H = [
+        '#', '페이지', '상태', '판정', '상품명', 'RgrCode',
+        '현재 상품별(O)', '제안 상품별 변경',
+        '현재 업종수', '현재 연결 업종', '제안 업종 변경',
+        '현재 체크수', '제안 체크 변경',
+        '권장 조치',
+      ];
+      const colW = [{wch:4},{wch:6},{wch:12},{wch:10},{wch:40},{wch:20},
+                    {wch:30},{wch:30},
+                    {wch:8},{wch:30},{wch:38},
+                    {wch:8},{wch:32},
+                    {wch:24}];
+
+      function buildAOA(items) {
+        // 헤더 행
+        const headerRow = H.map(h => styleCell(h, HEAD_STYLE));
+        const rows = [headerRow];
+        for (const r of items) {
+          const stStyle = STATUS_STYLE[r.status] || {};
+          const prop = buildProposal(r);
+          const isFix = r.judge && r.judge !== 'OK';
+
+          // 각 셀 스타일
+          const c_status = styleCell(r.status, {fill: stStyle.fill, fontColor: stStyle.font, bold:true, align:'center'});
+          const c_judge  = styleCell(r.judge,  {fill: stStyle.fill, fontColor: stStyle.font, align:'center'});
+          const c_idx    = styleCell(r.idx,    {align:'center'});
+          const c_page   = styleCell(r.page,   {align:'center'});
+          const c_name   = styleCell(r.name,   {wrap:true});
+          const c_rgr    = styleCell(r.rgr,    {font:'Consolas', align:'center'});
+          // 상품별
+          const c_oCurr  = styleCell(r.oDetail || (r.productType||'-'),
+                                     (prop.oProp!=='-') ? CURR_STYLE_BAD : CURR_STYLE_OK);
+          const c_oProp  = styleCell(prop.oProp, prop.oProp==='-' ? PROP_STYLE_NONE : PROP_STYLE_FIX);
+          // 업종
+          const c_tCount = styleCell(r.tCount,
+                                     (prop.tProp!=='-' && prop.tProp!=='유지') ? CURR_STYLE_BAD : CURR_STYLE_OK);
+          const c_tCurr  = styleCell(prop.tCurrent,
+                                     (prop.tProp!=='-' && prop.tProp!=='유지') ? CURR_STYLE_BAD : CURR_STYLE_OK);
+          const c_tProp  = styleCell(prop.tProp, prop.tProp==='-' ? PROP_STYLE_NONE : (prop.tProp==='유지' ? CURR_STYLE_OK : PROP_STYLE_FIX));
+          // 체크수
+          const c_cc     = styleCell(r.cc,
+                                     (prop.cbProp!=='-') ? CURR_STYLE_BAD : CURR_STYLE_OK);
+          const c_cbProp = styleCell(prop.cbProp, prop.cbProp==='-' ? PROP_STYLE_NONE : PROP_STYLE_FIX);
+          // 권장 조치
+          const c_fix = styleCell(r.fix, isFix ? {fill:'FEF3C7', fontColor:'92400E', bold:true} : PROP_STYLE_NONE);
+
+          rows.push([c_idx, c_page, c_status, c_judge, c_name, c_rgr,
+                     c_oCurr, c_oProp,
+                     c_tCount, c_tCurr, c_tProp,
+                     c_cc, c_cbProp,
+                     c_fix]);
+        }
+        return rows;
+      }
+
+      function makeSheet(items, withAutofilter) {
+        const aoa = buildAOA(items);
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        ws['!cols'] = colW;
+        ws['!rows'] = [{hpt:24}].concat(items.map(()=>({hpt:32})));
+        if (withAutofilter) ws['!autofilter'] = {ref: `A1:${String.fromCharCode(64+H.length)}${items.length+1}`};
+        return ws;
+      }
 
       // 시트1: 전체
-      const aoa1 = [HEADERS].concat(sorted.map(toRow));
-      const ws1 = XLSX.utils.aoa_to_sheet(aoa1);
-      ws1['!cols'] = colW;
-      ws1['!freeze'] = {xSplit:0, ySplit:1};
+      const ws1 = makeSheet(sorted, true);
       XLSX.utils.book_append_sheet(wb, ws1, '전체감사결과');
 
       // 시트2: 수정필요
       const fixItems = sorted.filter(r => r.judge && r.judge !== 'OK');
       if (fixItems.length > 0) {
-        const aoa2 = [HEADERS].concat(fixItems.map(toRow));
-        const ws2 = XLSX.utils.aoa_to_sheet(aoa2);
-        ws2['!cols'] = colW;
+        const ws2 = makeSheet(fixItems, true);
         XLSX.utils.book_append_sheet(wb, ws2, `수정필요_${fixItems.length}건`);
       }
 
       // 시트3: 요약
       const byJudge = {};
       for (const r of sorted) byJudge[r.status] = (byJudge[r.status]||0)+1;
-      const sumRows = [['판정','건수','비율']];
       const total = sorted.length;
+      const sumHeader = ['판정','건수','비율'].map(h => styleCell(h, HEAD_STYLE));
+      const sumRows = [sumHeader];
       Object.entries(byJudge).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{
-        sumRows.push([k, v, ((v/total)*100).toFixed(1)+'%']);
+        const st = STATUS_STYLE[k] || {};
+        sumRows.push([
+          styleCell(k, {fill:st.fill, fontColor:st.font, bold:true}),
+          styleCell(v, {align:'right'}),
+          styleCell(((v/total)*100).toFixed(1)+'%', {align:'right'}),
+        ]);
       });
-      sumRows.push(['합계', total, '100%']);
+      sumRows.push([
+        styleCell('합계', {bold:true, fill:'E7E6E6'}),
+        styleCell(total, {bold:true, align:'right', fill:'E7E6E6'}),
+        styleCell('100%', {bold:true, align:'right', fill:'E7E6E6'}),
+      ]);
       const ws3 = XLSX.utils.aoa_to_sheet(sumRows);
-      ws3['!cols'] = [{wch:20},{wch:8},{wch:10}];
+      ws3['!cols'] = [{wch:24},{wch:10},{wch:12}];
       XLSX.utils.book_append_sheet(wb, ws3, '요약');
 
       const cat = CFG.cat || '04';
