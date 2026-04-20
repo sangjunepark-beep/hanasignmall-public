@@ -15,6 +15,7 @@ body{font-family:"Noto Sans KR","맑은 고딕",sans-serif;background:#f8fafc;co
 .top h1{font-size:32px;font-weight:800;letter-spacing:-1px;margin-bottom:8px}
 .top p{font-size:15px;color:#dbeafe;font-weight:500}
 .top .icon{font-size:50px;margin-bottom:8px}
+.top .ver{display:inline-block;background:rgba(255,255,255,0.2);padding:4px 12px;border-radius:20px;font-size:12px;margin-top:10px;font-weight:600}
 
 /* 카드 */
 .card{background:#fff;border-radius:16px;padding:28px 32px;margin-bottom:20px;box-shadow:0 3px 12px rgba(15,23,42,0.06)}
@@ -29,6 +30,9 @@ body{font-family:"Noto Sans KR","맑은 고딕",sans-serif;background:#f8fafc;co
 .big-step .title{font-size:18px;font-weight:700;color:#0f172a;margin-bottom:6px}
 .big-step .desc{font-size:14px;color:#475569}
 .big-step .desc b{color:#1e40af}
+
+/* 북마크 라벨 */
+.bm{display:inline-block;background:#fef3c7;border:1px solid #fbbf24;color:#78350f;padding:4px 12px;border-radius:6px;font-weight:700;font-size:13px;margin:0 2px}
 
 /* 버튼 라벨 */
 .btn{display:inline-block;padding:4px 12px;border-radius:6px;font-weight:700;font-size:13px;margin:0 2px}
@@ -56,8 +60,9 @@ body{font-family:"Noto Sans KR","맑은 고딕",sans-serif;background:#f8fafc;co
 
 /* 코드 */
 .code-box{background:#0f172a;color:#e2e8f0;padding:18px;border-radius:10px;font-family:"SF Mono",monospace;font-size:12px;line-height:1.6;overflow-x:auto;margin:12px 0;position:relative;word-break:break-all}
-.code-box .copy{position:absolute;top:8px;right:8px;background:#3b82f6;color:#fff;border:0;border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer}
+.code-box .copy{position:absolute;top:8px;right:8px;background:#3b82f6;color:#fff;border:0;border-radius:5px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;z-index:10}
 .code-box .copy.done{background:#22c55e}
+.code-box .label{position:absolute;top:-10px;left:14px;background:#3b82f6;color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px}
 
 /* 경고 큰 박스 */
 .big-warn{background:linear-gradient(135deg,#fef3c7,#fed7aa);border:3px solid #d97706;border-radius:14px;padding:22px 26px;margin:20px 0;display:flex;gap:16px;align-items:flex-start}
@@ -71,22 +76,14 @@ body{font-family:"Noto Sans KR","맑은 고딕",sans-serif;background:#f8fafc;co
 .checklist li:last-child{border-bottom:none}
 .checklist li:before{content:"✓";position:absolute;left:8px;top:10px;width:20px;height:20px;background:#22c55e;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
 
-/* 빨간 주의 체크리스트 */
 .checklist.danger li:before{background:#dc2626;content:"!"}
 
 /* footer */
 footer{text-align:center;padding:20px 0;color:#64748b;font-size:12px}
 
-/* 큰 아이콘 목록 */
-.icon-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:14px 0}
-.icon-cell{text-align:center;padding:12px;background:#f8fafc;border-radius:10px}
-.icon-cell .big{font-size:28px;margin-bottom:4px}
-.icon-cell .name{font-size:12px;color:#475569;font-weight:600}
-
 @media (max-width:600px){
   .flow{flex-direction:column}
   .flow .arrow{transform:rotate(90deg)}
-  .icon-row{grid-template-columns:repeat(3,1fr)}
 }
 </style>
 </head>
@@ -98,6 +95,7 @@ footer{text-align:center;padding:20px 0;color:#64748b;font-size:12px}
   <div class="icon">🔍</div>
   <h1>실시간 감사 간단 사용법</h1>
   <p>하나사인몰 어드민 상품 자동 정리 · 5분이면 끝</p>
+  <div class="ver">사용자 매뉴얼 v2 · 2026-04-20</div>
 </div>
 
 <!-- 첫 인상 -->
@@ -125,14 +123,25 @@ footer{text-align:center;padding:20px 0;color:#64748b;font-size:12px}
 <div class="card">
 <h2><span class="emoji">📦</span>준비물 (한 번만 세팅)</h2>
 
+<p style="margin-bottom:14px"><b>북마크 2개</b>를 크롬에 추가합니다. 이후로는 클릭만 하면 됩니다.</p>
+
 <div class="big-step">
   <div class="num">1</div>
   <div class="content">
-    <div class="title">크롬 북마크 추가</div>
-    <div class="desc"><span class="kbd">Ctrl</span> + <span class="kbd">Shift</span> + <span class="kbd">B</span> 눌러서 북마크바 켜기 → 빈 곳 우클릭 → "페이지 추가"</div>
-    <div class="desc" style="margin-top:8px"><b>이름:</b> <code style="background:#f1f5f9;padding:2px 8px;border-radius:4px">🔍 실시간 감사</code></div>
+    <div class="title">북마크바 켜기</div>
+    <div class="desc"><span class="kbd">Ctrl</span> + <span class="kbd">Shift</span> + <span class="kbd">B</span> → 주소창 아래 북마크바 나타남</div>
+  </div>
+</div>
+
+<div class="big-step">
+  <div class="num">2</div>
+  <div class="content">
+    <div class="title">북마크 1 추가: <span class="bm">🔍 실시간 감사</span></div>
+    <div class="desc">북마크바 빈 곳 우클릭 → "페이지 추가"</div>
+    <div class="desc"><b>이름:</b> <code style="background:#f1f5f9;padding:2px 8px;border-radius:4px">🔍 실시간 감사</code></div>
     <div class="desc"><b>URL:</b> 아래 초록 버튼 눌러서 복사 → 북마크 URL 칸에 붙여넣기</div>
     <div class="code-box">
+      <span class="label">북마크 URL 1</span>
       <button class="copy" onclick="navigator.clipboard.writeText(this.nextElementSibling.innerText).then(()=>{this.textContent='✓ 복사됨';this.classList.add('done')})">📋 복사</button>
       <span>javascript:void((async()=>{document.getElementById('hs-audit-root')?.remove();const r=await fetch('https://raw.githubusercontent.com/sangjunepark-beep/hanasignmall-public/main/realtime_audit.js?v='+Math.random(),{cache:'reload'});eval(await r.text());})())</span>
     </div>
@@ -140,9 +149,36 @@ footer{text-align:center;padding:20px 0;color:#64748b;font-size:12px}
 </div>
 
 <div class="big-step">
-  <div class="num">2</div>
+  <div class="num">3</div>
   <div class="content">
-    <div class="title">어드민 로그인 유지</div>
+    <div class="title">북마크 2 추가: <span class="bm">🔑 API 키 설정</span></div>
+    <div class="desc">동일하게 북마크 추가.</div>
+    <div class="desc"><b>이름:</b> <code style="background:#f1f5f9;padding:2px 8px;border-radius:4px">🔑 API 키 설정</code></div>
+    <div class="desc"><b>URL:</b></div>
+    <div class="code-box">
+      <span class="label">북마크 URL 2</span>
+      <button class="copy" onclick="navigator.clipboard.writeText(this.nextElementSibling.innerText).then(()=>{this.textContent='✓ 복사됨';this.classList.add('done')})">📋 복사</button>
+      <span>javascript:(function(){const k=prompt('Anthropic API 키를 입력하세요\n(sk-ant-api03- 으로 시작):');if(k&&k.startsWith('sk-ant')){sessionStorage.setItem('hs_anthropic_key',k);localStorage.setItem('hs_anthropic_key',k);alert('✅ API 키 저장 완료\n길이: '+k.length+'\n\n이제 🔍 실시간 감사 북마크 누르세요.');}else{alert('❌ 키가 올바르지 않습니다.');}})();</span>
+    </div>
+    <div class="box warn">⚠️ 북마크 저장 후 URL 앞에 <code>javascript:</code> 가 붙어있는지 확인하세요. Chrome이 자동으로 지우는 경우 있습니다.</div>
+  </div>
+</div>
+
+<div class="big-step">
+  <div class="num">4</div>
+  <div class="content">
+    <div class="title">API 키 한 번만 등록</div>
+    <div class="desc">어드민 아무 페이지 열고 방금 만든 <span class="bm">🔑 API 키 설정</span> 북마크 <b>클릭</b></div>
+    <div class="desc">팝업 뜨면 박상준 차장님이 전달한 API 키 붙여넣고 <b>확인</b></div>
+    <div class="desc">"✅ API 키 저장 완료" 뜨면 끝 — <b>이 PC 크롬에선 다시 안 해도 됨</b></div>
+    <div class="box tip">💡 브라우저 데이터 삭제하면 키도 날아갑니다. 그땐 다시 🔑 북마크 눌러서 등록하면 됩니다.</div>
+  </div>
+</div>
+
+<div class="big-step">
+  <div class="num">5</div>
+  <div class="content">
+    <div class="title">어드민 로그인 확인</div>
     <div class="desc">ad.hanasm.kr 어드민에 로그인된 상태여야 합니다. 로그인 풀렸으면 다시 로그인.</div>
   </div>
 </div>
@@ -167,7 +203,7 @@ footer{text-align:center;padding:20px 0;color:#64748b;font-size:12px}
 <div class="big-step">
   <div class="num">2</div>
   <div class="content">
-    <div class="title">🔍 실시간 감사 북마크 클릭</div>
+    <div class="title"><span class="bm">🔍 실시간 감사</span> 북마크 클릭</div>
     <div class="desc">화면 우측 상단에 <b>검은 대시보드</b>가 뜨고 자동으로 감사 시작.</div>
     <div class="desc">1~5분 정도 기다리면 감사 완료. 커피 한 잔 타러 가세요 ☕</div>
   </div>
@@ -179,6 +215,7 @@ footer{text-align:center;padding:20px 0;color:#64748b;font-size:12px}
     <div class="title"><span class="btn purple">🧠 LLM 판정 실행</span> 버튼 클릭</div>
     <div class="desc">AI가 상품명을 읽고 <b>"이 상품은 어떤 카테고리·공간이 맞는지"</b> 자동 판단.</div>
     <div class="desc">30초~2분 소요. 비용은 상품 100개당 약 100원.</div>
+    <div class="box danger">❌ "API 키 없음" 에러 나오면 → 🔑 API 키 설정 북마크 먼저 클릭하고 키 등록하세요.</div>
   </div>
 </div>
 
@@ -233,6 +270,7 @@ footer{text-align:center;padding:20px 0;color:#64748b;font-size:12px}
     <p>• <b>백업 JSON 파일 반드시 보관</b> — 수정 후 혹시 모를 롤백용</p>
     <p>• <b>📊 엑셀 검토 꼭 하고</b> 🔧 수정 버튼 누르기 — 이상한 AI 판단 걸러야 함</p>
     <p>• <b>🔧 수정은 되돌리기 어려움</b> — 확신 없으면 박상준 차장님께 물어보고 진행</p>
+    <p>• <b>API 키는 절대 외부에 공유 금지</b> — 유출되면 비용 폭탄</p>
   </div>
 </div>
 
@@ -242,12 +280,33 @@ footer{text-align:center;padding:20px 0;color:#64748b;font-size:12px}
 
 <ul class="checklist">
   <li><b>북마크 눌러도 안 뜨면:</b> 북마크 편집해서 URL 앞에 <code style="background:#f1f5f9;padding:2px 6px;border-radius:3px">javascript:</code> 붙어있는지 확인</li>
-  <li><b>"이전 버전이 떠요":</b> 북마크 URL을 위 초록 버튼으로 새로 복사해서 교체</li>
-  <li><b>🧠 LLM 버튼이 안 먹혀요:</b> API 키 등록 안 됨 — 박상준 차장님께 문의</li>
+  <li><b>"이전 버전이 떠요":</b> 🔍 실시간 감사 북마크 URL을 매뉴얼에서 다시 복사해서 교체</li>
+  <li><b>🧠 LLM 판정 "키 없음" 에러:</b> 🔑 API 키 설정 북마크 먼저 클릭해서 키 등록</li>
+  <li><b>🔑 북마크 눌러도 팝업 안 뜨면:</b> URL 앞 <code>javascript:</code> 가 잘려있음 → 편집해서 다시 추가</li>
+  <li><b>팝업에 키 붙여넣기 안 돼요:</b> 키를 직접 타이핑 (또는 키를 일반 메모장에 먼저 복사 후 팝업에 붙여넣기)</li>
   <li><b>감사 중 오류:</b> 어드민 로그인 풀렸을 수 있음 — 다시 로그인 후 재시도</li>
   <li><b>수정 결과가 이상해요:</b> 즉시 🔙 롤백 → 백업 파일 선택 → 복구</li>
   <li><b>해결 안 되면:</b> 화면 <b>캡쳐</b>해서 박상준 차장님께 전달</li>
 </ul>
+</div>
+
+<!-- API 키 관리 -->
+<div class="card">
+<h2><span class="emoji">🔑</span>API 키 관련</h2>
+
+<h3 style="font-size:15px;font-weight:700;margin:14px 0 8px;color:#1e40af">키 확인</h3>
+<p style="font-size:14px">🔑 API 키 설정 북마크 누르고 팝업에 아무거나 입력 안 하고 <b>취소</b> 눌러도, 이미 등록된 키가 있다면 동작 안 함. 새로 교체하려면 새 키 입력.</p>
+
+<h3 style="font-size:15px;font-weight:700;margin:14px 0 8px;color:#1e40af">키 삭제 (필요 시)</h3>
+<p style="font-size:14px">F12 → Console 열고 아래 입력 (이건 짧아서 붙여넣기 제한 안 걸림):</p>
+<div class="code-box" style="padding:12px 16px">
+<button class="copy" onclick="navigator.clipboard.writeText(this.nextElementSibling.innerText).then(()=>{this.textContent='✓ 복사됨';this.classList.add('done')})">📋 복사</button>
+<span>sessionStorage.removeItem('hs_anthropic_key');localStorage.removeItem('hs_anthropic_key');</span>
+</div>
+
+<h3 style="font-size:15px;font-weight:700;margin:14px 0 8px;color:#1e40af">비용 확인</h3>
+<p style="font-size:14px">박상준 차장님만 해당. <a href="https://console.anthropic.com/settings/usage" target="_blank">console.anthropic.com/settings/usage</a> 에서 실시간 확인.</p>
+
 </div>
 
 <!-- 가장 중요한 한 줄 -->
@@ -259,7 +318,7 @@ footer{text-align:center;padding:20px 0;color:#64748b;font-size:12px}
 </div>
 
 <footer>
-<p><b>하나사인몰 실시간 감사</b> · 간단 사용 매뉴얼</p>
+<p><b>하나사인몰 실시간 감사</b> · 사용자 매뉴얼 v2 · 2026-04-20</p>
 <p>문의: 박상준 차장 (웹팀 총괄)</p>
 </footer>
 
