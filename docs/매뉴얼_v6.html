@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>하나사인몰 실시간 감사 대시보드 · 운영 매뉴얼 v6</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,"Noto Sans KR","Segoe UI",Roboto,sans-serif;background:#f1f5f9;color:#0f172a;line-height:1.7;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1080px;margin:0 auto;padding:40px 24px}
+@media print{body{background:#fff}.wrap{padding:0}.noprint{display:none}.toc{page-break-after:always}}
+
+/* 헤더 */
+.hero{background:linear-gradient(135deg,#0f172a 0%,#1e40af 100%);color:#fff;padding:40px 32px;border-radius:16px;margin-bottom:24px;box-shadow:0 10px 30px rgba(15,23,42,0.12)}
+.hero h1{font-size:28px;font-weight:800;letter-spacing:-1px;margin-bottom:8px}
+.hero .v{display:inline-block;background:rgba(255,255,255,0.2);color:#fff;font-size:12px;padding:4px 10px;border-radius:4px;margin-left:10px;vertical-align:middle;font-weight:600}
+.hero p{font-size:14px;color:#cbd5e1;margin-top:10px}
+.hero .meta{margin-top:20px;display:flex;gap:24px;font-size:12px;color:#94a3b8;flex-wrap:wrap}
+.hero .meta b{color:#e2e8f0}
+
+/* 섹션 카드 */
+.card{background:#fff;border-radius:12px;padding:28px 32px;margin-bottom:20px;box-shadow:0 2px 8px rgba(15,23,42,0.04);border:1px solid #e2e8f0}
+h2{font-size:20px;font-weight:800;color:#0f172a;margin-bottom:16px;padding-bottom:10px;border-bottom:2px solid #3b82f6;display:flex;align-items:center;gap:8px}
+h2 .no{background:#3b82f6;color:#fff;width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+h3{font-size:15px;font-weight:700;color:#1e293b;margin:22px 0 10px;padding-left:12px;border-left:4px solid #3b82f6}
+p{font-size:14px;color:#334155;margin-bottom:10px}
+
+/* 목차 */
+.toc{background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;padding:24px 28px;margin-bottom:20px}
+.toc h2{border-bottom:none;font-size:16px;margin-bottom:12px;padding-bottom:0}
+.toc ol{list-style:none;counter-reset:toc}
+.toc ol li{counter-increment:toc;padding:4px 0;font-size:13px;color:#334155}
+.toc ol li::before{content:counter(toc,decimal-leading-zero) ". ";color:#3b82f6;font-weight:700;font-family:"SF Mono",monospace;margin-right:4px}
+.toc ol li a{color:#334155;text-decoration:none}
+.toc ol li a:hover{color:#3b82f6;text-decoration:underline}
+
+/* 코드 */
+code{background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:1px 6px;font-family:"SF Mono","Consolas",monospace;font-size:12px;color:#1e40af}
+.codebox{background:#0f172a;color:#e2e8f0;padding:18px 20px;border-radius:8px;font-family:"SF Mono","Consolas",monospace;font-size:12px;line-height:1.7;overflow-x:auto;position:relative;margin:12px 0 16px}
+.codebox pre{white-space:pre-wrap;word-break:break-all}
+.codebox .cb-btn{position:absolute;top:10px;right:10px;background:#334155;color:#cbd5e1;border:0;border-radius:4px;padding:4px 10px;font-size:11px;cursor:pointer}
+.codebox .cb-btn:hover{background:#475569}
+.codebox .cb-btn.ok{background:#22c55e;color:#fff}
+
+/* 키보드 키 */
+.kbd{background:#f8fafc;border:1px solid #cbd5e1;border-bottom-width:2px;border-radius:4px;padding:2px 6px;font-family:"SF Mono",monospace;font-size:11px;color:#334155}
+
+/* 박스 */
+.box{background:#eff6ff;border-left:4px solid #3b82f6;padding:14px 18px;border-radius:0 8px 8px 0;margin:12px 0;font-size:13px;color:#1e3a8a}
+.box.warn{background:#fef3c7;border-color:#d97706;color:#78350f}
+.box.ok{background:#dcfce7;border-color:#16a34a;color:#14532d}
+.box.danger{background:#fee2e2;border-color:#dc2626;color:#7f1d1d}
+.box b{color:inherit}
+
+/* 단계 카드 */
+.steps{display:grid;gap:14px;margin:16px 0}
+.step{display:flex;gap:16px;padding:18px 20px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px}
+.step .num{flex-shrink:0;width:36px;height:36px;background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;box-shadow:0 4px 12px rgba(59,130,246,0.3)}
+.step .content{flex:1}
+.step .content h4{font-size:15px;font-weight:700;color:#0f172a;margin-bottom:6px}
+.step .content p{font-size:13px;margin-bottom:0}
+
+/* 테이블 */
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px}
+th,td{border:1px solid #e2e8f0;padding:10px 12px;text-align:left;vertical-align:top}
+th{background:#f1f5f9;font-weight:700;color:#334155;font-size:12px}
+tr:nth-child(even) td{background:#f8fafc}
+td.c{text-align:center;font-family:"SF Mono",monospace;font-size:12px}
+td.num{text-align:right;font-family:"SF Mono",monospace}
+
+/* 버튼 배지 */
+.btn-badge{display:inline-block;padding:3px 10px;border-radius:4px;font-weight:600;font-size:12px;font-family:-apple-system,sans-serif}
+.btn-badge.llm{background:#581c87;color:#fff}
+.btn-badge.fix{background:#dc2626;color:#fff}
+.btn-badge.excel{background:#059669;color:#fff}
+.btn-badge.rollback{background:#991b1b;color:#fff}
+.btn-badge.backup{background:#065f46;color:#fff}
+.btn-badge.primary{background:#3b82f6;color:#fff}
+
+/* 상태 뱃지 */
+.status{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:700;font-family:"SF Mono",monospace}
+.status.ok{background:#dcfce7;color:#14532d}
+.status.warn{background:#fef3c7;color:#78350f}
+.status.err{background:#fee2e2;color:#7f1d1d}
+
+/* 플로우 다이어그램 */
+.flow{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0;align-items:center;justify-content:center}
+.flow .node{background:#fff;border:2px solid #3b82f6;border-radius:8px;padding:10px 14px;font-size:12px;font-weight:600;color:#0f172a;text-align:center;min-width:110px}
+.flow .arrow{color:#64748b;font-size:16px}
+
+/* FAQ */
+details{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px 18px;margin-bottom:8px}
+details summary{font-weight:700;color:#0f172a;cursor:pointer;font-size:14px}
+details[open] summary{margin-bottom:10px}
+details p{font-size:13px}
+
+/* footer */
+footer{text-align:center;padding:30px 0;color:#64748b;font-size:12px;margin-top:20px}
+footer a{color:#3b82f6;text-decoration:none}
+
+/* 비용 카드 */
+.cost-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+.cost-cell{background:linear-gradient(135deg,#fff,#f8fafc);border:1px solid #e2e8f0;border-radius:10px;padding:16px;text-align:center}
+.cost-cell .label{font-size:11px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px}
+.cost-cell .value{font-size:22px;font-weight:800;color:#1e40af;font-family:"SF Mono",monospace}
+.cost-cell .sub{font-size:11px;color:#94a3b8;margin-top:4px}
+
+/* 색상 범례 */
+.color-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px}
+.color-swatch{width:32px;height:18px;border:1px solid #cbd5e1;border-radius:3px;flex-shrink:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- HERO -->
+<div class="hero">
+  <h1>하나사인몰 실시간 감사 대시보드<span class="v">v6</span></h1>
+  <p>어드민 상품 카테고리 자동 감사 · LLM 판정 · 일괄 수정 · 원클릭 롤백</p>
+  <div class="meta">
+    <span>📅 <b>2026-04-20</b> 릴리즈</span>
+    <span>📂 공개 리포 <b>sangjunepark-beep/hanasignmall-public</b></span>
+    <span>🔖 SHA <b>2a513f4</b></span>
+    <span>🏢 하나사인몰 웹팀 · 박상준 차장</span>
+  </div>
+</div>
+
+<!-- TOC -->
+<div class="toc noprint">
+  <h2>📑 목차</h2>
+  <ol>
+    <li><a href="#intro">이 도구가 뭐냐</a></li>
+    <li><a href="#install">첫 설치 (한 번만)</a></li>
+    <li><a href="#flow">표준 작업 플로우</a></li>
+    <li><a href="#features">주요 기능 상세</a></li>
+    <li><a href="#excel">Excel 리포트 구조</a></li>
+    <li><a href="#safety">안전 원칙</a></li>
+    <li><a href="#codes">판정 체계</a></li>
+    <li><a href="#maps">한글 명칭 매핑</a></li>
+    <li><a href="#troubleshoot">트러블슈팅</a></li>
+    <li><a href="#cost">비용 정보</a></li>
+    <li><a href="#faq">자주 묻는 질문</a></li>
+  </ol>
+</div>
+
+<!-- 1. 소개 -->
+<div class="card" id="intro">
+<h2><span class="no">1</span>이 도구가 뭐냐</h2>
+
+<p>하나사인몰 어드민(ad.hanasm.kr)에 등록된 상품의 카테고리 정비 작업을 자동화하는 브라우저 도구입니다.</p>
+
+<h3>해결하는 문제</h3>
+<p>입간판·안내판 등 수백~수천 개 상품에 대해 <b>상품별 카테고리</b>, <b>업종별 카테고리</b>, <b>관심분야 공간 체크박스</b>가 제대로 설정돼 있는지 일일이 확인하고 잘못된 걸 수정하는 건 사람이 하면 하루 종일 걸립니다.</p>
+<p>이 도구는 <b>북마크 한 번 클릭</b>으로:</p>
+<ul style="margin-left:20px;font-size:13px;color:#334155">
+  <li>전체 페이지 자동 감사 (현재 검색 필터 유지)</li>
+  <li>LLM이 상품명 보고 "어떤 카테고리·공간이 맞는지" 자동 판단</li>
+  <li>잘못된 거 한꺼번에 바로잡음 (iframe 백그라운드 처리)</li>
+  <li>문제 생기면 <b>원클릭 롤백</b>으로 되돌림</li>
+</ul>
+
+<h3>작동 원리</h3>
+<div class="flow">
+  <div class="node">어드민 탭</div>
+  <div class="arrow">→</div>
+  <div class="node">북마크 클릭</div>
+  <div class="arrow">→</div>
+  <div class="node">GitHub에서<br>스크립트 로드</div>
+  <div class="arrow">→</div>
+  <div class="node">플로팅<br>대시보드</div>
+  <div class="arrow">→</div>
+  <div class="node">작업 자동화</div>
+</div>
+
+<p style="margin-top:12px">실시간 네트워크 호출로 <b>실제 데이터</b>를 가져와 처리합니다. 데모용 가짜 데이터가 아닙니다.</p>
+
+</div>
+
+<!-- 2. 설치 -->
+<div class="card" id="install">
+<h2><span class="no">2</span>첫 설치 (한 번만)</h2>
+
+<div class="steps">
+
+<div class="step">
+  <div class="num">1</div>
+  <div class="content">
+    <h4>Chrome 북마크바 표시</h4>
+    <p><span class="kbd">Ctrl + Shift + B</span> 눌러서 주소창 아래 북마크바 켜기</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">2</div>
+  <div class="content">
+    <h4>북마크 추가</h4>
+    <p>북마크바 빈 영역 우클릭 → <b>"페이지 추가"</b> 클릭. 이름은 <code>🔍 실시간 감사</code> 같이 입력.</p>
+    <p>URL 칸에 <b>아래 전체</b>를 복사해서 붙여넣기:</p>
+    <div class="codebox">
+      <button class="cb-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.innerText).then(()=>{this.textContent='복사됨';this.classList.add('ok')})">복사</button>
+      <pre>javascript:void((async()=>{document.getElementById('hs-audit-root')?.remove();const r=await fetch('https://raw.githubusercontent.com/sangjunepark-beep/hanasignmall-public/main/realtime_audit.js?v='+Math.random(),{cache:'reload'});eval(await r.text());})())</pre>
+    </div>
+    <div class="box warn">Chrome이 저장 시 앞의 <code>javascript:</code> 부분을 자동으로 지우는 경우가 있습니다. 저장 후 북마크 편집해서 <code>javascript:</code>가 URL 맨 앞에 있는지 확인하세요.</div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">3</div>
+  <div class="content">
+    <h4>Claude API 키 등록 (LLM 판정 사용할 때만)</h4>
+    <p>LLM이 상품명 읽고 자동 판단하게 하려면 Anthropic API 키가 필요합니다.</p>
+    <p>1) <a href="https://console.anthropic.com/settings/keys" target="_blank">https://console.anthropic.com/settings/keys</a> 에서 API 키 발급 (<code>sk-ant-api03-...</code>)</p>
+    <p>2) Chrome에서 ad.hanasm.kr 어드민 탭 열고 <span class="kbd">F12</span> → <b>Console</b> 탭</p>
+    <p>3) 아래 두 줄을 Console에 붙여넣기 (중간 키 부분만 본인 키로 교체):</p>
+    <div class="codebox">
+      <button class="cb-btn" onclick="navigator.clipboard.writeText(this.nextElementSibling.innerText).then(()=>{this.textContent='복사됨';this.classList.add('ok')})">복사</button>
+      <pre>sessionStorage.setItem('hs_anthropic_key', 'sk-ant-api03-여기에본인키');
+localStorage.setItem('hs_anthropic_key', sessionStorage.getItem('hs_anthropic_key'));</pre>
+    </div>
+    <div class="box">키는 <b>본인 브라우저에만 저장</b>됩니다. GitHub 리포·스크립트·대화 어디에도 저장되지 않음. 제거는 <code>sessionStorage.removeItem('hs_anthropic_key')</code></div>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">4</div>
+  <div class="content">
+    <h4>어드민 로그인 확인</h4>
+    <p>ad.hanasm.kr 로그인이 유지되고 있는지 확인. 북마클릿은 로그인된 세션 쿠키를 사용하므로 필수.</p>
+  </div>
+</div>
+
+</div>
+
+<div class="box ok">설치 끝. 이후로는 감사할 때마다 북마크 한 번 클릭하면 됩니다.</div>
+</div>
+
+<!-- 3. 플로우 -->
+<div class="card" id="flow">
+<h2><span class="no">3</span>표준 작업 플로우</h2>
+
+<p>매번 감사·수정할 때 이 7단계 순서를 지키세요. 특히 <b>④ Excel 검수</b>와 <b>⑥ 결과 검증</b>을 스킵하면 데이터 오염 위험이 있습니다.</p>
+
+<div class="steps">
+
+<div class="step">
+  <div class="num">1</div>
+  <div class="content">
+    <h4>어드민 GoodsList에서 필터 설정</h4>
+    <p>판매상태(판매중), 카테고리(예: 입간판 04), 검색어 등 원하는 조건을 화면에 맞춰두기.</p>
+    <p><b>북마클릿은 현재 탭 URL의 쿼리 그대로 감사</b>하므로 필터가 그대로 반영됩니다.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">2</div>
+  <div class="content">
+    <h4>[테스트/시연] 범위 축소 (선택)</h4>
+    <p>처음 쓸 때는 1페이지만 돌려 검증 권장. 북마크 실행 <b>전에</b> <span class="kbd">F12</span> → Console에:</p>
+    <div class="codebox"><pre>window.HS_AUDIT_CONFIG = {pages:[1]};</pre></div>
+    <p>그 다음 북마크 클릭.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">3</div>
+  <div class="content">
+    <h4>북마크 🔍 실시간 감사 클릭</h4>
+    <p>화면 우측 상단에 플로팅 대시보드가 뜨고 자동으로 수집 → 감사 시작.</p>
+    <p>진행 상황은 실시간 로그로 표시. 전체 페이지 감사까지 1~5분 소요 (상품 수에 따라).</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">4</div>
+  <div class="content">
+    <h4><span class="btn-badge llm">🧠 LLM 판정</span> 실행</h4>
+    <p>감사 완료 후 대시보드 하단 버튼 클릭.</p>
+    <p>FIX 판정된 상품에 대해 상품명을 Claude Haiku 4.5에 전송 → 적합한 3차 코드 + 체크할 공간 코드 자동 추론.</p>
+    <p>완료까지 30초~2분. 비용은 <b>300건 기준 $0.20~0.35</b>.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">5</div>
+  <div class="content">
+    <h4><span class="btn-badge excel">📊 Excel 다운로드</span> + 검수</h4>
+    <p>엑셀 파일 열어서 <b>제안 상품별 변경</b>·<b>제안 업종 변경</b>·<b>제안 체크 변경</b> 컬럼 확인.</p>
+    <p>🧠 표시가 있는 셀은 LLM 판정 결과. 타당해 보이면 다음 단계, 이상하면 여기서 중단.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">6</div>
+  <div class="content">
+    <h4><span class="btn-badge fix">🔧 일괄 자동 수정</span> 실행</h4>
+    <p>주황색 경고 박스 안의 빨간 버튼 클릭.</p>
+    <ol style="margin-left:18px;font-size:13px;color:#334155;margin-top:8px">
+      <li>Confirm 다이얼로그 뜸 → "계속?" 확인</li>
+      <li><b>롤백 백업 JSON 자동 다운로드</b> → 파일 반드시 보관 (예: 바탕화면)</li>
+      <li>iframe에 상품별 편집 페이지 로드 → 자동 수정 진행</li>
+      <li>완료 시 alert로 성공/실패 건수 보고</li>
+    </ol>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">7</div>
+  <div class="content">
+    <h4>결과 샘플 검증</h4>
+    <p>수정된 상품 중 1~2개를 어드민에서 직접 열어서 눈으로 확인.</p>
+    <p><b>정상</b> → 범위 확대 가능 (5페이지, 10페이지...). <b>이상</b> → 다음 단계(롤백).</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">8</div>
+  <div class="content">
+    <h4>[이상 시] <span class="btn-badge rollback">🔙 롤백</span> 실행</h4>
+    <p>대시보드 하단 빨간 버튼 클릭.</p>
+    <p>옵션: [확인] = localStorage 최신 백업 / [취소] = 파일 선택창 → 방금 받은 JSON 선택</p>
+    <p>체크박스가 백업 시점 상태로 자동 복구. (상품별/업종 카테고리는 현재 CB만 완전 복구 가능)</p>
+  </div>
+</div>
+
+</div>
+
+<div class="box danger">🚨 절대 규칙: 어드민에서 <code>.click()</code> 기반 수정은 즉시 서버 저장됩니다. 실행하면 실제 상품 데이터가 바뀌므로 <b>④ Excel 검수 → ⑤ 샘플 확인</b> 두 단계는 절대 건너뛰지 마세요.</div>
+
+</div>
+
+<!-- 4. 기능 상세 -->
+<div class="card" id="features">
+<h2><span class="no">4</span>주요 기능 상세</h2>
+
+<h3>대시보드 구성</h3>
+<table>
+<tr><th>영역</th><th>내용</th></tr>
+<tr><td><b>상단 메트릭 5개</b></td><td>전체 / 완료 / OK / FIX / 과태깅 카운트 실시간</td></tr>
+<tr><td><b>STEP 스텝퍼</b></td><td>수집 → 3차원 감사 → 판정 → 리포트 (진행바 포함)</td></tr>
+<tr><td><b>페이지별 진행셀</b></td><td>1P, 2P, 3P... 각 페이지별 감사 완료 카운트</td></tr>
+<tr><td><b>현재 처리 상품 카드</b></td><td>RgrCode, 상품명, O/T, 체크수, 판정 뱃지</td></tr>
+<tr><td><b>실시간 로그</b></td><td>타임스탬프 + 태그 + 메시지 순으로 기록</td></tr>
+<tr><td><b>다운로드 영역</b></td><td>Excel / CSV / JSON / 복사 버튼</td></tr>
+<tr><td><b>LLM 판정 영역</b></td><td>🧠 보라색 버튼</td></tr>
+<tr><td><b>자동 수정 영역</b></td><td>🔧 주황색 경고 박스 + 빨간 실행 버튼</td></tr>
+<tr><td><b>백업/롤백 영역</b></td><td>🛡️ 초록 백업 목록 + 🔙 빨강 롤백 버튼</td></tr>
+</table>
+
+<h3><span class="btn-badge primary">감사</span> 기능</h3>
+<p>현재 URL의 쿼리를 그대로 이어받아 GoodsList.php 각 페이지를 fetch. 판매상태·카테고리·viewCnt 자동 반영.</p>
+<p>각 상품의 편집 페이지를 fetch 하여 <b>3차원</b>을 동시 수집:</p>
+<ul style="margin-left:20px;font-size:13px">
+  <li><b>catO</b> (상품별 카테고리) · 1/2/3차</li>
+  <li><b>catT</b> (업종별 카테고리) · 연결된 업종 9개</li>
+  <li><b>cbDetail</b> (관심분야 공간 체크박스) · 그룹별 카운트 + 전체 value 배열</li>
+</ul>
+
+<h3><span class="btn-badge llm">🧠 LLM 판정</span></h3>
+<p>감사 후 FIX 판정된 상품에 한해 실행. 상품명·현재 O/T·체크수를 Claude Haiku 4.5에 전송하면 다음 JSON 형태로 답변 받음:</p>
+<div class="codebox"><pre>{
+  "rgr": "240104151418_8287",
+  "o3": "04-01-009",                      // 상품별 3차 추가할 코드
+  "spaces": ["05-03","06-07","02-01"],   // 재체크할 공간 코드
+  "reason": "차량 요일제 주차 관련"
+}</pre></div>
+
+<h3><span class="btn-badge excel">📊 Excel 다운로드</span></h3>
+<p>xlsx-js-style 기반 3 시트 파일. 시트 1은 전체, 2는 수정필요만, 3은 요약. 14컬럼 Before/After 비교 + 셀별 색상. 상세는 5번 섹션 참조.</p>
+
+<h3><span class="btn-badge fix">🔧 일괄 자동 수정</span></h3>
+<p>FIX 판정 상품을 백그라운드 iframe으로 열어 자동 처리:</p>
+<table>
+<tr><th>판정</th><th>동작</th></tr>
+<tr><td><span class="status err">FIX_T</span></td><td>누락된 업종만 CateCodeT_1에 선택 → 연결 버튼 click 반복 (최대 9번)</td></tr>
+<tr><td><span class="status warn">FIX_O</span></td><td>LLM이 준 o3 코드로 catO1→2→3 선택 → 추가 버튼 click</td></tr>
+<tr><td><span class="status warn">FIX_CB</span></td><td>체크된 관심분야 체크박스 전부 해제 → LLM 지정 공간만 재체크</td></tr>
+<tr><td><span class="status err">FIX_ALL / FIX_MULTI</span></td><td>위 3가지 모두 시도</td></tr>
+</table>
+
+<h3><span class="btn-badge backup">🛡️ 백업 자동 생성</span></h3>
+<p>자동 수정 실행 <b>직전</b>에 JSON 백업이 자동 다운로드됩니다.</p>
+<ul style="margin-left:20px;font-size:13px">
+  <li>파일명 예: <code>롤백백업_04_2026-04-20_14-30-45.json</code></li>
+  <li>localStorage에도 저장 (키 <code>hs_backup_날짜</code>)</li>
+  <li>최대 10개까지 자동 보관, 초과 시 오래된 것부터 삭제</li>
+  <li>내용: 각 상품의 현재 <code>o</code>, <code>t</code>, <code>cc</code>, <code>ct</code>, <code>cd</code>, 그리고 <b>체크된 value 배열 전체</b> (롤백 완전 복구용)</li>
+</ul>
+
+<h3><span class="btn-badge rollback">🔙 원클릭 롤백</span></h3>
+<p>두 가지 소스 중 선택:</p>
+<ol style="margin-left:20px;font-size:13px">
+  <li><b>localStorage 최신 백업</b> (확인 버튼) — 빠름. 최근 백업 바로 적용</li>
+  <li><b>파일 선택</b> (취소 버튼) — 원하는 백업 JSON 파일 업로드</li>
+</ol>
+<p>체크박스를 백업 시점 value 배열과 비교해 추가된 건 해제, 빠진 건 체크. iframe 기반 순차 처리.</p>
+
+</div>
+
+<!-- 5. Excel 구조 -->
+<div class="card" id="excel">
+<h2><span class="no">5</span>Excel 리포트 구조</h2>
+
+<h3>파일명 규칙</h3>
+<div class="codebox"><pre>{카테고리명}_감사리포트_{시작시각}.xlsx
+예: 입간판_감사리포트_143045.xlsx</pre></div>
+
+<h3>시트 구성 (3 시트)</h3>
+<table>
+<tr><th>시트</th><th>내용</th><th>용도</th></tr>
+<tr><td><b>1. 전체감사결과</b></td><td>모든 상품 행 (정렬: 판정 우선 → 페이지 → 체크수)</td><td>전체 현황 파악</td></tr>
+<tr><td><b>2. 수정필요_N건</b></td><td>FIX 판정 상품만 필터링</td><td>즉시 조치 대상 확인</td></tr>
+<tr><td><b>3. 요약</b></td><td>판정별 건수 + 비율</td><td>대시보드용 요약 통계</td></tr>
+</table>
+
+<h3>주요 컬럼 (14개)</h3>
+<table>
+<tr><th>#</th><th>컬럼명</th><th>내용</th></tr>
+<tr><td class="c">1</td><td><b>#</b></td><td>연번</td></tr>
+<tr><td class="c">2</td><td><b>페이지</b></td><td>GoodsList 페이지 번호</td></tr>
+<tr><td class="c">3</td><td><b>상태</b></td><td>정상/과태깅/업종 미연결/카테고리 오류 (색상 자동)</td></tr>
+<tr><td class="c">4</td><td><b>판정</b></td><td>OK / FIX_O / FIX_T / FIX_CB / FIX_ALL</td></tr>
+<tr><td class="c">5</td><td><b>상품명</b></td><td>줄바꿈 wrap</td></tr>
+<tr><td class="c">6</td><td><b>RgrCode</b></td><td>상품 고유 ID</td></tr>
+<tr><td class="c">7</td><td><b>현재 상품별(O)</b></td><td>현재 연결된 카테고리 + 한글 명칭</td></tr>
+<tr><td class="c">8</td><td><b>제안 상품별 변경</b></td><td>🧠 + 코드 + 사유 (LLM 판정 결과)</td></tr>
+<tr><td class="c">9</td><td><b>현재 업종수</b></td><td>0~9</td></tr>
+<tr><td class="c">10</td><td><b>현재 연결 업종</b></td><td>"아파트, 학교/학원, ..."</td></tr>
+<tr><td class="c">11</td><td><b>제안 업종 변경</b></td><td>"9업종 전체 연결 (N개 추가: ...)"</td></tr>
+<tr><td class="c">12</td><td><b>현재 체크수</b></td><td>관심분야 체크된 개수</td></tr>
+<tr><td class="c">13</td><td><b>제안 체크 변경</b></td><td>🧠 + "해제 후 N개 재체크: 05-03 자동차..."</td></tr>
+<tr><td class="c">14</td><td><b>권장 조치</b></td><td>한 줄 요약</td></tr>
+</table>
+
+<h3>색상 코드</h3>
+<div class="color-row"><span class="color-swatch" style="background:#305496"></span><span>헤더 — 짙은 파랑 + 흰 글자</span></div>
+<div class="color-row"><span class="color-swatch" style="background:#C6EFCE"></span><span>정상(OK) — 연녹</span></div>
+<div class="color-row"><span class="color-swatch" style="background:#FFEB9C"></span><span>과태깅 — 연노랑</span></div>
+<div class="color-row"><span class="color-swatch" style="background:#FFD580"></span><span>카테고리 오류 — 연주황</span></div>
+<div class="color-row"><span class="color-swatch" style="background:#FFC7CE"></span><span>업종 미연결 — 연빨강</span></div>
+<div class="color-row"><span class="color-swatch" style="background:#FBE5D6"></span><span>현재값 (변경 필요) — 연살구</span></div>
+<div class="color-row"><span class="color-swatch" style="background:#E2EFDA"></span><span>제안값 (바꿀 내용) — 연녹 굵게</span></div>
+<div class="color-row"><span class="color-swatch" style="background:#F2F2F2"></span><span>변경 없음 — 연회색</span></div>
+<div class="color-row"><span class="color-swatch" style="background:#FEF3C7"></span><span>권장 조치 (FIX) — 크림</span></div>
+
+</div>
+
+<!-- 6. 안전 -->
+<div class="card" id="safety">
+<h2><span class="no">6</span>안전 원칙 (4중 장치)</h2>
+
+<p>자동 수정은 어드민 서버에 즉시 반영되어 <b>되돌리기가 어렵습니다</b>. 그래서 4단계 안전장치를 반드시 지킵니다.</p>
+
+<div class="steps">
+
+<div class="step">
+  <div class="num">1</div>
+  <div class="content">
+    <h4>실행 전 백업 자동 생성</h4>
+    <p>🔧 일괄 자동 수정 버튼 클릭 순간 JSON 파일이 자동 다운로드됩니다. 이 파일을 반드시 보관하세요.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">2</div>
+  <div class="content">
+    <h4>Confirm 다이얼로그 승인</h4>
+    <p>실행 건수와 "되돌릴 수 없음" 경고가 표시됩니다. <b>읽고</b> 확인 누르세요.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">3</div>
+  <div class="content">
+    <h4>수정 후 샘플 검증</h4>
+    <p>완료 후 수정된 상품 1~2개를 어드민에서 직접 열어 카테고리/체크박스 상태가 기대와 맞는지 확인.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="num">4</div>
+  <div class="content">
+    <h4>롤백 경로 확보</h4>
+    <p>이상 발견 시 🔙 버튼 → 백업 JSON → 자동 원상복구. 체크박스 단위로 완전 복원 가능.</p>
+  </div>
+</div>
+
+</div>
+
+<div class="box warn"><b>시연·첫 실행 시 권장:</b> <code>window.HS_AUDIT_CONFIG = {pages:[1]}</code> 로 범위 1페이지 30개로 제한하고 테스트하세요. 소규모에서 문제없음 확인 후 범위 확대.</div>
+
+</div>
+
+<!-- 7. 판정 -->
+<div class="card" id="codes">
+<h2><span class="no">7</span>판정 체계</h2>
+
+<table>
+<tr>
+  <th>판정 코드</th><th>한글 상태</th><th>의미</th><th>자동 수정 동작</th>
+</tr>
+<tr>
+  <td class="c"><span class="status ok">OK</span></td>
+  <td>정상</td>
+  <td>3차원 모두 정상</td>
+  <td>수정 없음</td>
+</tr>
+<tr>
+  <td class="c"><span class="status warn">FIX_O</span></td>
+  <td>카테고리 오류</td>
+  <td>상품별 3차 카테고리 부적합</td>
+  <td>catO1/2/3 선택 + 추가 버튼 click</td>
+</tr>
+<tr>
+  <td class="c"><span class="status err">FIX_T</span></td>
+  <td>업종 미연결</td>
+  <td>업종 카테고리 비었거나 누락</td>
+  <td>9개 업종 순차 연결</td>
+</tr>
+<tr>
+  <td class="c"><span class="status warn">FIX_CB</span></td>
+  <td>과태깅</td>
+  <td>관심분야 체크박스 30개 초과 또는 0개</td>
+  <td>전체 해제 + LLM 지정 공간만 재체크</td>
+</tr>
+<tr>
+  <td class="c"><span class="status err">FIX_MULTI</span></td>
+  <td>복합 문제</td>
+  <td>2개 이상 차원에 문제</td>
+  <td>해당 항목 모두 수행</td>
+</tr>
+<tr>
+  <td class="c"><span class="status err">FIX_ALL</span></td>
+  <td>전체 미설정</td>
+  <td>O + T + CB 모두 미설정</td>
+  <td>모두 수행</td>
+</tr>
+</table>
+
+</div>
+
+<!-- 8. 매핑 -->
+<div class="card" id="maps">
+<h2><span class="no">8</span>한글 명칭 매핑 표</h2>
+
+<h3>상품별 1차 (catO1) → 한글</h3>
+<table>
+<tr><th>코드</th><th>한글명</th><th>코드</th><th>한글명</th></tr>
+<tr><td class="c">01</td><td>게시판</td><td class="c">02</td><td>안내판</td></tr>
+<tr><td class="c">04</td><td>입간판</td><td class="c">05</td><td>현수막/배너</td></tr>
+<tr><td class="c">07</td><td>구조물</td><td class="c">08</td><td>도로안전용품</td></tr>
+<tr><td class="c">09</td><td>각종물품</td><td class="c">10</td><td>인쇄물/스티커</td></tr>
+<tr><td class="c">13</td><td>개인결제</td><td class="c">60</td><td>기획전</td></tr>
+</table>
+
+<h3>업종 (CateCodeT_1) → 한글</h3>
+<table>
+<tr><th>코드</th><th>한글명</th><th>코드</th><th>한글명</th></tr>
+<tr><td class="c">01</td><td>학교/학원</td><td class="c">02</td><td>식당/카페</td></tr>
+<tr><td class="c">03</td><td>아파트</td><td class="c">04</td><td>호텔/펜션</td></tr>
+<tr><td class="c">05</td><td>병원/요양시설</td><td class="c">06</td><td>회사/공장</td></tr>
+<tr><td class="c">07</td><td>공공기관</td><td class="c">08</td><td>헬스/레저</td></tr>
+<tr><td class="c">09</td><td>기타업종</td><td class="c">12</td><td>개인결제창</td></tr>
+</table>
+
+<h3>상품별 3차 (입간판 04-01 A형) → 한글</h3>
+<table>
+<tr><th>코드</th><th>한글명</th></tr>
+<tr><td class="c">04-01-001</td><td>청소중</td></tr>
+<tr><td class="c">04-01-002</td><td>공사중/수리</td></tr>
+<tr><td class="c">04-01-003</td><td>안전/경고</td></tr>
+<tr><td class="c">04-01-004</td><td>식당/카페/매장</td></tr>
+<tr><td class="c">04-01-005</td><td>매장운영</td></tr>
+<tr><td class="c">04-01-007</td><td>주의/위험</td></tr>
+<tr><td class="c">04-01-008</td><td>금지/출입금지</td></tr>
+<tr><td class="c">04-01-009</td><td>주차/주차장</td></tr>
+<tr><td class="c">04-01-011</td><td>CCTV/금연/촬영</td></tr>
+<tr><td class="c">04-01-012</td><td>학교/학원/교육</td></tr>
+<tr><td class="c">04-01-013</td><td>기타/범용</td></tr>
+</table>
+
+<h3>공간 prefix (체크박스) → 그룹명</h3>
+<table>
+<tr><th>prefix</th><th>그룹명</th><th>주요 공간 예시</th></tr>
+<tr><td class="c">02</td><td>학교군</td><td>02-01 학교 · 02-02 유치원/학원 · 02-03 대학교 · 02-04 도서관</td></tr>
+<tr><td class="c">03</td><td>식당/서비스군</td><td>03-01 식당/카페 · 03-02 미용 · 03-03 스포츠</td></tr>
+<tr><td class="c">04</td><td>의료군</td><td>04-01 병원 · 04-02 동물병원</td></tr>
+<tr><td class="c">05</td><td>산업군</td><td>05-01 공장 · 05-02 물류 · 05-03 자동차</td></tr>
+<tr><td class="c">06</td><td>공공/복지군</td><td>06-01 관공서 · 06-04 군/경 · 06-05 소방서 · 06-07 공영주차장</td></tr>
+<tr><td class="c">07</td><td>전문서비스업</td><td>07-01 소방업 · 07-03 보안업 · 07-04 방역업</td></tr>
+<tr><td class="c">08</td><td>유통/상업군</td><td>08-01 마트 · 08-03 백화점 · 08-04 영화관</td></tr>
+</table>
+
+</div>
+
+<!-- 9. 트러블슈팅 -->
+<div class="card" id="troubleshoot">
+<h2><span class="no">9</span>트러블슈팅</h2>
+
+<table>
+<tr><th>증상</th><th>원인</th><th>해결</th></tr>
+<tr>
+  <td>북마크 눌렀는데 반응 없음</td>
+  <td>Chrome이 <code>javascript:</code> prefix 자동 삭제</td>
+  <td>북마크 편집 → URL 맨 앞에 <code>javascript:</code> 다시 추가</td>
+</tr>
+<tr>
+  <td>이전 버전 실행됨 (288 대신 294 등)</td>
+  <td>GitHub CDN / 브라우저 캐시</td>
+  <td>북마크 URL에 <code>?v=</code> 쿼리 + <code>cache:'reload'</code> 있는지 확인</td>
+</tr>
+<tr>
+  <td>🧠 LLM 판정 "키 없음" 에러</td>
+  <td>sessionStorage에 API 키 미등록</td>
+  <td>2번 섹션 3단계 재실행</td>
+</tr>
+<tr>
+  <td>🧠 판정 401 Unauthorized</td>
+  <td>API 키 만료/잘못됨</td>
+  <td>Anthropic Console에서 키 재발급 후 재등록</td>
+</tr>
+<tr>
+  <td>대시보드 가로 스크롤 생김</td>
+  <td>폭 부족</td>
+  <td><code>window.HS_AUDIT_CONFIG = {width: 900}</code></td>
+</tr>
+<tr>
+  <td>글자 너무 작음/큼</td>
+  <td>scale 값</td>
+  <td><code>{scale: 1.5}</code> (작게) 또는 <code>{scale: 2.5}</code> (크게)</td>
+</tr>
+<tr>
+  <td>자동 수정 중 일부 실패</td>
+  <td>iframe 타임아웃 or 어드민 응답 지연</td>
+  <td>pace 늘리기: <code>{pace: 500}</code>. 또는 범위 축소 후 재시도</td>
+</tr>
+<tr>
+  <td>감사 결과 페이지 수 0</td>
+  <td>현재 탭이 GoodsList.php 아님</td>
+  <td>어드민 GoodsList.php 화면에서 북마크 클릭</td>
+</tr>
+<tr>
+  <td>판매중지 상품이 섞여 나옴</td>
+  <td>어드민 필터 설정 안 함</td>
+  <td>북마크 실행 <b>전에</b> GoodsList에서 판매상태 필터 적용</td>
+</tr>
+<tr>
+  <td>Excel 색상 없음</td>
+  <td>xlsx-js-style 로딩 실패</td>
+  <td>네트워크 확인. 안 되면 CSV 다운로드로 대체</td>
+</tr>
+<tr>
+  <td>🔙 롤백 후에도 일부 남음</td>
+  <td>FIX_O 수정은 현재 롤백 미지원</td>
+  <td>O(상품별 카테고리)는 수동으로 해제 필요 (어드민에서 직접)</td>
+</tr>
+</table>
+
+</div>
+
+<!-- 10. 비용 -->
+<div class="card" id="cost">
+<h2><span class="no">10</span>비용 정보</h2>
+
+<p>LLM 판정은 Anthropic Claude Haiku 4.5 API를 사용합니다. 본인 API 키로 호출되므로 Anthropic 계정에서 비용이 발생합니다.</p>
+
+<div class="cost-grid">
+  <div class="cost-cell">
+    <div class="label">상품 10개</div>
+    <div class="value">$0.01</div>
+    <div class="sub">약 14원</div>
+  </div>
+  <div class="cost-cell">
+    <div class="label">상품 100개</div>
+    <div class="value">$0.08</div>
+    <div class="sub">약 110원</div>
+  </div>
+  <div class="cost-cell">
+    <div class="label">상품 500개</div>
+    <div class="value">$0.35</div>
+    <div class="sub">약 490원</div>
+  </div>
+</div>
+
+<p style="font-size:12px;color:#64748b">※ 2026-04 기준 Haiku 4.5 요금표 기준. FIX 판정된 상품에만 호출되므로 실제 비용은 더 낮을 수 있음.</p>
+
+<h3>사용량 조회</h3>
+<p><a href="https://console.anthropic.com/settings/usage" target="_blank">https://console.anthropic.com/settings/usage</a> 에서 실시간 토큰·비용·남은 크레딧 확인.</p>
+
+</div>
+
+<!-- 11. FAQ -->
+<div class="card" id="faq">
+<h2><span class="no">11</span>자주 묻는 질문</h2>
+
+<details>
+<summary>LLM 판정 없이 자동 수정만 돌려도 되나요?</summary>
+<p>FIX_T(업종 연결)는 LLM 없이도 자동 수정이 정확히 동작합니다. 9업종 전체 연결이 규칙이라 추론 필요 없음.</p>
+<p>FIX_CB(과태깅)는 LLM 없으면 <b>전체 해제만</b> 수행되고 재체크는 안 됩니다. 즉 상품이 어떤 공간 체크도 없는 상태가 되어 나중에 수동 재설정 필요.</p>
+<p>FIX_O(상품별 3차)는 규칙 기반 추출 가능한 패턴은 자동, 아니면 "보완 필요" 표시만 됨.</p>
+<p><b>권장: LLM 판정을 돌린 뒤 자동 수정.</b> 비용 대비 훨씬 정확합니다.</p>
+</details>
+
+<details>
+<summary>자동 수정 중에 브라우저 탭을 닫으면?</summary>
+<p>진행 중이던 수정은 중단됩니다. 이미 click된 것은 서버에 반영되고 남은 건 안 됨.</p>
+<p>이런 경우 대시보드 중지 버튼(■) 누르고, 어떤 상품까지 처리됐는지 로그 확인 후 남은 상품만 다시 범위 지정해서 재실행.</p>
+</details>
+
+<details>
+<summary>여러 카테고리(입간판 + 안내판) 한번에 돌릴 수 있나?</summary>
+<p>한 번의 북마크 실행은 하나의 카테고리만 처리. 다른 카테고리 하려면 어드민에서 필터 바꾸고 다시 북마크 클릭.</p>
+<p>필요하면 카테고리별로 순차 진행 권장 (각각 결과 검증 후 넘어가기).</p>
+</details>
+
+<details>
+<summary>대시보드가 다른 걸 가려서 어드민이 안 보여요.</summary>
+<p>대시보드 헤더를 드래그하면 위치 이동 가능. 또는 — 버튼으로 최소화. 또는 ✕ 닫기.</p>
+<p>완전히 닫고 나서 다시 북마크 클릭하면 다시 뜹니다.</p>
+</details>
+
+<details>
+<summary>API 키를 팀원 여러 명이 공유해도 되나?</summary>
+<p>기술적으론 가능하지만 권장 안 함. 각자 Anthropic 계정에서 별도 키 발급해서 사용하는 게 사용량 추적·한도 관리에 편리.</p>
+<p>팀 전체 사용량을 관리하려면 Anthropic Team 플랜 고려.</p>
+</details>
+
+<details>
+<summary>백업 파일을 얼마나 보관해야 하나?</summary>
+<p>수정 작업 직후 며칠 ~ 1주일 정도는 보관 권장. 그 후 팀 공유 드라이브에 백업 아카이브로 이동해두면 좋음.</p>
+<p>localStorage에도 최대 10개까지 자동 보관되지만 브라우저 데이터 삭제 시 사라지니 파일 보관이 확실.</p>
+</details>
+
+<details>
+<summary>자동 수정이 실패한 상품은 어떻게 알 수 있나요?</summary>
+<p>실행 완료 후 alert에 "성공 N / 실패 M" 표시. 실시간 로그에 [FIX ERR] 태그로 어떤 상품이 왜 실패했는지 기록됨.</p>
+<p>실패한 상품은 별도로 어드민에서 수동 확인 필요.</p>
+</details>
+
+<details>
+<summary>iframe이 뭔가요? 왜 백그라운드에서 처리해요?</summary>
+<p>iframe은 현재 페이지 안에 숨겨둔 별도 브라우저 창. 이 창에 상품 편집 페이지를 로드해서 JavaScript로 자동 조작. 사용자 눈에는 안 보이지만 실제로 어드민에 로그인된 상태로 동작.</p>
+<p>덕분에 브라우저 화면은 대시보드 그대로 유지되면서 뒤에서 조용히 수정이 진행됩니다.</p>
+</details>
+
+<details>
+<summary>수정 결과가 어드민 화면에 바로 반영되나요?</summary>
+<p>네, 어드민은 <code>.click()</code>이 즉시 AJAX로 서버에 저장되는 구조. 자동 수정 진행 중에도 별도 탭에서 같은 상품을 새로고침하면 변경이 보입니다.</p>
+<p>단, 자동 수정 중엔 그 상품을 수동으로 건드리지 마세요 (충돌 가능).</p>
+</details>
+
+<details>
+<summary>대시보드에서 로그가 너무 빨리 지나가요.</summary>
+<p>실시간 로그 영역을 스크롤하면 과거 로그 확인 가능. 최대 300줄 유지.</p>
+<p>전체 기록이 필요하면 완료 후 JSON 다운로드 받아서 보관. 모든 데이터가 거기 들어있음.</p>
+</details>
+
+</div>
+
+<!-- Footer -->
+<footer>
+  <p><b>하나사인몰 실시간 감사 대시보드 v6</b> · 2026-04-20 · 웹팀 박상준 차장</p>
+  <p>스크립트: <a href="https://github.com/sangjunepark-beep/hanasignmall-public/blob/main/realtime_audit.js" target="_blank">GitHub</a> · 문서 피드백은 Cowork에서</p>
+</footer>
+
+</div>
+</body>
+</html>
