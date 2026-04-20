@@ -29,7 +29,9 @@ const CFG = Object.assign({
   batch: 10,               // fetch 병렬 묶음
   pace: 200,               // 각 상품 UI 업데이트 후 지연 (ms)
   batchGap: 300,           // 배치 간 간격 (ms)
-  scale: 1.125,            // 대시보드 크기 배율 (기본 112.5%)
+  scale: 1.125,            // 텍스트 배율 (기본 112.5%)
+  width: 780,              // 대시보드 폭 (px, scale과 무관하게 독립)
+  pgCols: 5,               // 페이지 셀 한 줄 최대 개수 (넘으면 2줄)
 }, window.HS_AUDIT_CONFIG || {});
 
 // 기존 대시보드가 있으면 제거
@@ -44,7 +46,8 @@ root.innerHTML = `
   #hs-audit-root, #hs-audit-root * { box-sizing: border-box; font-family: -apple-system, "Noto Sans KR", "Segoe UI", sans-serif; }
   #hs-audit-root {
     position: fixed; top: 16px; right: 16px; z-index: 999999;
-    width: calc(520px * var(--hs-scale, 1.5));
+    width: calc(var(--hs-width, 780) * 1px);
+    max-width: calc(100vw - 32px);
     max-height: calc(100vh - 32px);
     background: #0a0e1a; color: #e4e9f0; border: 1px solid #1e293b;
     border-radius: 12px; box-shadow: 0 24px 64px rgba(0,0,0,0.5);
@@ -52,7 +55,7 @@ root.innerHTML = `
     font-size: calc(12px * var(--hs-scale, 1.5));
     line-height: 1.5;
   }
-  #hs-audit-root.minimized { width: calc(320px * var(--hs-scale, 1.5)); max-height: 60px; }
+  #hs-audit-root.minimized { width: 360px; max-height: 60px; }
   #hs-audit-root .ha-header {
     display: flex; justify-content: space-between; align-items: center;
     padding: 12px 16px; background: #111827; border-bottom: 1px solid #1e293b;
@@ -182,6 +185,7 @@ root.innerHTML = `
 `;
 document.body.appendChild(root);
 root.style.setProperty('--hs-scale', String(CFG.scale));
+root.style.setProperty('--hs-width', String(CFG.width || 780));
 
 // ================== 헬퍼 ==================
 const $ = id => document.getElementById(id);
@@ -474,7 +478,7 @@ async function main(){
   $('ha-sub').innerHTML = `카테고리 ${CFG.cat} · ${CFG.pages.length}페이지 × ${CFG.viewCnt} = <b>${CFG.total || tgtTotal}개</b> · 시작 <span id="ha-start-t">${startStr}</span> · 경과 <span id="ha-elapsed">00:00</span>`;
   // 페이지 셀 재렌더링 (자동 감지된 페이지 수에 맞춤)
   pgEl.innerHTML = '';
-  const pgCols = Math.min(CFG.pages.length, 10);
+  const pgCols = Math.min(CFG.pages.length, CFG.pgCols || 5);
   pgEl.style.gridTemplateColumns = `repeat(${pgCols}, 1fr)`;
   CFG.pages.forEach(p => {
     const el = document.createElement('div');
