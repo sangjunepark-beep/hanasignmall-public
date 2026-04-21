@@ -1043,10 +1043,11 @@ async function main(){
       const html = await res.text();
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const m2 = {}, m5 = {};
+      // 주의: value 형식은 "pfx`type`sub`label" 이고 label 뒤에 종결 백틱 없음
       doc.querySelectorAll('input[type="checkbox"]').forEach(x => {
-        const m = (x.value||'').match(/^(\d{2})`(\d)`(\d{2}-\d{2})`(.*?)`/);
+        const m = (x.value||'').match(/^(\d{2})`(\d)`(\d{2}-\d{2})`(.*)$/);
         if (!m) return;
-        const pfx = m[1], typ = m[2], sub = m[3], label = m[4];
+        const pfx = m[1], typ = m[2], sub = m[3], label = (m[4]||'').trim();
         if (typ === '2') {
           if (!m2[pfx]) m2[pfx] = {};
           m2[pfx][sub] = label;
@@ -1361,8 +1362,8 @@ ${lines.join('\n')}`;
     const matrix = await buildRuntimeMatrix();
     if (!matrix) { addLog('매트릭스 없음 · v9 호환 모드로 진행', 'warn'); }
 
-    // v10은 배치 4~5건 (한 건당 데이터 크기 커서 8 유지 어려움)
-    const V10_BATCH = matrix ? 5 : BATCH;
+    // v10은 배치 4건 (한 건당 응답 크기 커서 JSON 파싱 실패 방지)
+    const V10_BATCH = matrix ? 4 : BATCH;
     for (let i = 0; i < targets.length; i += V10_BATCH) {
       const batch = targets.slice(i, i + V10_BATCH);
       $('ha-llm-status').textContent = `${done}/${targets.length} 처리 중...`;
@@ -1370,7 +1371,7 @@ ${lines.join('\n')}`;
         let arr;
         if (matrix) {
           // v10 경로
-          const text = await callClaude(apiKey, buildUserPromptV10(batch, matrix), LLM_SYSTEM_V10, 3500);
+          const text = await callClaude(apiKey, buildUserPromptV10(batch, matrix), LLM_SYSTEM_V10, 6000);
           arr = extractJSON(text);
         } else {
           // v9 호환 fallback
