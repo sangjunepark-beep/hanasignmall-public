@@ -1349,8 +1349,13 @@ ${lines.join('\n')}`;
       return;
     }
     // FIX 판정 상품 대상 (OK는 스킵)
-    const targets = RESULT.items.filter(it => it.judge && it.judge !== 'OK');
-    if (!targets.length) { addLog('LLM 판정 대상 없음 (FIX 없음)', 'warn'); return; }
+    // v10.2: 기본은 OK 상품까지 포함 (내용 검증 목적). 기존 동작 원하면 HS_AUDIT_CONFIG.llm_fix_only = true
+    const fixOnly = (CFG && CFG.llm_fix_only === true);
+    const targets = fixOnly
+      ? RESULT.items.filter(it => it.judge && it.judge !== 'OK')
+      : RESULT.items.filter(it => it.judge);
+    if (!targets.length) { addLog('LLM 판정 대상 없음', 'warn'); return; }
+    addLog(`🎯 LLM 판정 대상 ${targets.length}건 (OK ${fixOnly?'제외':'포함'})`, 'sys');
 
     $('ha-llm-run').disabled = true;
     $('ha-llm-run').textContent = 'LLM 판정 중...';
@@ -1491,6 +1496,40 @@ ${lines.join('\n')}`;
         if (['FIX_O','FIX_ALL','FIX_MULTI'].includes(it.judge) && it.llm_o3) {
           const hasCode = s.o.includes(it.llm_o3);
           checks.push({name:'O3('+it.llm_o3+')', ok: hasCode, detail: hasCode ? '등록' : '누락'});
+        }
+        // v10.2: SelOptCat2 remove 검증 (LLM이 지정한 업종×공간이 실제로 해제됐는지)
+        if (it.llm_selOptCat2_remove && Object.keys(it.llm_selOptCat2_remove).length) {
+          const CBR_T2_V = /^(\d{2})`2`(\d{2}-\d{2})`/;
+          const stillChecked = new Set();
+          (s.checked_values||[]).forEach(v => {
+            const m = v.match(CBR_T2_V);
+            if (m) stillChecked.add(m[1]+'|'+m[2]);
+          });
+          let leftover = 0, total = 0;
+          for (const pfx in it.llm_selOptCat2_remove) {
+            for (const sub of (it.llm_selOptCat2_remove[pfx]||[])) {
+              total++;
+              if (stillChecked.has(pfx+'|'+sub)) leftover++;
+            }
+          }
+          checks.push({name:'T2해제', ok: leftover===0 && total>0, detail: '잔존 '+leftover+'/'+total});
+        }
+        // v10.2: SelOptCat2 keep 검증 (지정 체크가 실제로 들어갔는지)
+        if (it.llm_selOptCat2_keep && Object.keys(it.llm_selOptCat2_keep).length) {
+          const CBR_T2_V2 = /^(\d{2})`2`(\d{2}-\d{2})`/;
+          const currChecked = new Set();
+          (s.checked_values||[]).forEach(v => {
+            const m = v.match(CBR_T2_V2);
+            if (m) currChecked.add(m[1]+'|'+m[2]);
+          });
+          let matched = 0, totalK = 0;
+          for (const pfx in it.llm_selOptCat2_keep) {
+            for (const sub of (it.llm_selOptCat2_keep[pfx]||[])) {
+              totalK++;
+              if (currChecked.has(pfx+'|'+sub)) matched++;
+            }
+          }
+          checks.push({name:'T2체크', ok: matched===totalK && totalK>0, detail: matched+'/'+totalK});
         }
         // CB재체크: type=5 전용 + 과태깅(>25) 잔존 감지
         if (['FIX_CB','FIX_ALL','FIX_MULTI'].includes(it.judge)) {
@@ -1965,6 +2004,78 @@ async function fixOne(item) {
     } else {
       results.push('CB이미없음');
     }
+  }
+
+  // ============ v10.2: SelOptCat2 업종별 공간 add/remove ============
+  // LLM 응답의 llm_selOptCat2_keep / llm_selOptCat2_remove 반영
+  // 이 블록은 FIX_CB 처리 여부와 무관하게 LLM 지시가 있으면 실행
+  const t2RemoveMap = item.llm_selOptCat2_remove || {};
+  const t2KeepMap = item.llm_selOptCat2_keep || {};
+  const hasT2Work = Object.keys(t2RemoveMap).length || Object.keys(t2KeepMap).length;
+  if (hasT2Work) {
+    await new Promise(r => setTimeout(r, 250));
+    const state2 = await hsFetchState(item.rgr);
+    if (state2) {
+      const CBR_T2_ANY = /^(\d{2})`2`(\d{2}-\d{2})`/;
+      // 현재 체크된 type=2 value 목록
+      const currCheckedT2 = (state2.checked_values||[]).filter(v => CBR_T2_ANY.test(v));
+      // 전체 type=2 체크박스 value (체크+미체크) - 페이지 다시 fetch
+      const html3 = await (await fetch(`/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`, {credentials:'include'})).text();
+      const doc3 = new DOMParser().parseFromString(html3, 'text/html');
+      const allT2 = [];
+      doc3.querySelectorAll('input[type="checkbox"]').forEach(x => {
+        if (CBR_T2_ANY.test(x.value||'')) allT2.push(x.value);
+      });
+      // 해제 대상 (현재 체크된 것 중 remove 대상)
+      const toUncheck = [];
+      for (const pfx in t2RemoveMap) {
+        for (const sub of (t2RemoveMap[pfx]||[])) {
+          const match = currCheckedT2.find(v => {
+            const m = v.match(CBR_T2_ANY);
+            return m && m[1] === pfx && m[2] === sub;
+          });
+          if (match) toUncheck.push(match);
+        }
+      }
+      // 체크 대상 (미체크 상태 + keep 대상 + 페이지에 존재)
+      const currSet = new Set(currCheckedT2);
+      const toCheckT2 = [];
+      for (const pfx in t2KeepMap) {
+        for (const sub of (t2KeepMap[pfx]||[])) {
+          const match = allT2.find(v => {
+            const m = v.match(CBR_T2_ANY);
+            return m && m[1] === pfx && m[2] === sub;
+          });
+          if (match && !currSet.has(match)) toCheckT2.push(match);
+        }
+      }
+      let t2Off = 0, t2On = 0;
+      for (let i=0; i<toUncheck.length; i+=10) {
+        const batch = toUncheck.slice(i, i+10);
+        const r = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, false)));
+        t2Off += r.filter(x => x.ok).length;
+      }
+      for (let i=0; i<toCheckT2.length; i+=10) {
+        const batch = toCheckT2.slice(i, i+10);
+        const r = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, true)));
+        t2On += r.filter(x => x.ok).length;
+      }
+      if (t2Off || t2On) results.push(`T2-${t2Off}+${t2On}`);
+    }
+  }
+
+  // ============ v10.2: catT 업종 remove (LLM 지시) ============
+  // LLM이 llm_catT_remove 에 지정한 업종은 hsApiCateDel 로 제거
+  const catTRemove = item.llm_catT_remove || [];
+  if (catTRemove.length) {
+    let tDel = 0;
+    for (const code of catTRemove) {
+      if (connectedT.has(code)) {
+        const r = await hsApiCateDel(rowid, item.rgr, code, '2');
+        if (r.ok) tDel++;
+      }
+    }
+    if (tDel) results.push(`T-${tDel}`);
   }
 
   return results.join(',') || '변경없음';
