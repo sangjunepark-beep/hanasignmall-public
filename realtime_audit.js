@@ -198,6 +198,7 @@ root.innerHTML = `
     </div>
     <div class="ha-dl-row" style="margin-top:10px">
       <button class="ha-btn" style="background:#065f46;color:#fff" id="ha-backup-list">🛡️ 백업 목록</button>
+      <button class="ha-btn" style="background:#0369a1;color:#fff" id="ha-reverify">✓ 재검증</button>
       <button class="ha-btn" style="background:#991b1b;color:#fff;margin-left:auto" id="ha-rollback">🔙 롤백 실행</button>
       <span id="ha-rb-status" style="font-size:calc(12px * var(--hs-scale, 1.5));color:#fca5a5;margin-left:8px"></span>
     </div>
@@ -416,6 +417,9 @@ async function auditOne(item) {
   if (!res.ok) return Object.assign(item, {err:'HTTP'+res.status});
   const html = await res.text();
   const doc = new DOMParser().parseFromString(html, 'text/html');
+  // RgrRowid 추출 (방법 B AJAX 호출에 필수)
+  const rowidM = html.match(/RgrRowid:\s*'(\d+)'/);
+  const rgrRowid = rowidM ? rowidM[1] : null;
   const oneVals = [], twoVals = [];
   for (let i=1; i<=30; i++) {
     const h = doc.querySelector(`input[name="SelectCatoryCodeOne_${i}"]`);
@@ -436,10 +440,10 @@ async function auditOne(item) {
     if (x.hasAttribute('checked')) {
       cd[k][1]++;
       cbC++;
-      checked_values.push(x.value);  // 전체 value 저장 (롤백용)
+      checked_values.push(x.value);  // 전체 value 저장 (롤백·방법 B용)
     }
   });
-  return Object.assign(item, {o: oneVals.join(','), t: twoVals.join(','), cc: cbC, ct: cbT, cd, checked_values});
+  return Object.assign(item, {o: oneVals.join(','), t: twoVals.join(','), cc: cbC, ct: cbT, cd, checked_values, rowid: rgrRowid});
 }
 
 // ================== 판정 규칙 ==================
@@ -1145,6 +1149,62 @@ JSON 배열만. 다른 텍스트·마크다운 금지.
     addLog('백업 재다운로드: ' + a.download, 'ok');
   };
 
+  // ============ ✓ 재검증 (자동 수정 후 반영 여부 확인) ============
+  $('ha-reverify').onclick = async () => {
+    const fixItems = (RESULT.items || []).filter(r => r.judge && r.judge !== 'OK');
+    if (!fixItems.length) { alert('FIX 대상 없음'); return; }
+    if (!confirm(`FIX 판정 ${fixItems.length}건 재검증을 시작합니다.\n각 상품 편집 페이지를 다시 fetch해서 수정 반영 여부 확인.\n\n소요 시간 약 ${Math.ceil(fixItems.length*0.5/60)}~${Math.ceil(fixItems.length*1.5/60)}분. 계속?`)) return;
+
+    $('ha-reverify').disabled = true;
+    $('ha-reverify').textContent = '재검증 중...';
+    addLog(`✓ 재검증 시작 (${fixItems.length}건)`, 'sys');
+
+    let done=0, fullOk=0, partial=0, nothing=0;
+    const report = [];
+    for (let i=0; i<fixItems.length; i+=5) {
+      const batch = fixItems.slice(i, i+5);
+      const states = await Promise.all(batch.map(it => hsFetchState(it.rgr).then(s => ({it, s}))));
+      for (const {it, s} of states) {
+        done++;
+        if (!s) { report.push({rgr:it.rgr, status:'fetch_fail'}); continue; }
+        // 검증: FIX_T면 9업종 연결됐나, FIX_O면 llm_o3 들어갔나, FIX_CB면 llm_spaces 체크됐나
+        const checks = [];
+        if (['FIX_T','FIX_ALL','FIX_MULTI'].includes(it.judge)) {
+          checks.push({name:'T9', ok: s.t.length >= 9});
+        }
+        if (['FIX_O','FIX_ALL','FIX_MULTI'].includes(it.judge) && it.llm_o3) {
+          checks.push({name:`O3(${it.llm_o3})`, ok: s.o.includes(it.llm_o3)});
+        }
+        if (['FIX_CB','FIX_ALL','FIX_MULTI'].includes(it.judge) && it.llm_spaces && it.llm_spaces.length) {
+          const CBR_V = /^(\d{2})`\d`(\d{2}-\d{2})`/;
+          const currSpaces = new Set();
+          s.checked_values.forEach(v => { const m=v.match(CBR_V); if(m) currSpaces.add(m[2]); });
+          const matched = it.llm_spaces.filter(sp => currSpaces.has(sp)).length;
+          checks.push({name:'CB재체크', ok: matched === it.llm_spaces.length, detail:`${matched}/${it.llm_spaces.length}`});
+        }
+        const okN = checks.filter(c=>c.ok).length;
+        const status = okN === checks.length ? 'full' : (okN > 0 ? 'partial' : 'none');
+        if (status==='full') fullOk++;
+        else if (status==='partial') partial++;
+        else nothing++;
+        report.push({rgr:it.rgr, name:it.name, judge:it.judge, status, checks, after_t: s.t.length, after_cc: s.cc});
+        $('ha-rb-status').textContent = `${done}/${fixItems.length} · 완료 ${fullOk} · 부분 ${partial} · 미반영 ${nothing}`;
+      }
+    }
+    // 결과 저장 (window에)
+    window.HS_REVERIFY = report;
+    $('ha-reverify').disabled = false;
+    $('ha-reverify').textContent = '✓ 재검증 완료';
+    addLog(`✓ 재검증 종료 · 완료 ${fullOk} · 부분 ${partial} · 미반영 ${nothing}`, 'ok');
+    // JSON 다운로드
+    const blob = new Blob([JSON.stringify({summary:{total:done,fullOk,partial,nothing},report}, null, 2)], {type:'application/json;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `재검증리포트_${startStr.replace(/:/g,'')}.json`;
+    a.click();
+    alert(`재검증 완료\n완전 반영: ${fullOk}건\n부분 반영: ${partial}건\n미반영: ${nothing}건\n\n재검증리포트 JSON 다운로드됨.\nwindow.HS_REVERIFY 로 접근 가능.`);
+  };
+
   // ============ 🔙 롤백 실행 ============
   $('ha-rollback').onclick = async () => {
     // 백업 소스 선택: localStorage 또는 파일
@@ -1336,169 +1396,278 @@ function autoFixBackup(fixItems) {
   return backup;
 }
 
-async function fixOne(item) {
-  const iframe = document.createElement('iframe');
-  iframe.setAttribute('data-hs-audit', '1');
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1024px;height:768px;border:0;pointer-events:none;opacity:0.01';
-  iframe.src = `/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`;
-  document.body.appendChild(iframe);
+// ==================== 방법 B: 어드민 AJAX 직접 호출 ====================
+const HS_API = '/AdminManager/SelectCateCode.php';
+
+// 카테고리 추가 (업종 또는 상품별)
+async function hsApiCateAdd(rowid, rgr, code, optType, currentCount) {
+  const cateName = optType === '1' ? 'AM_CoOne' : 'AM_CoTwo';
+  const params = new URLSearchParams({
+    SelCateTab: 'AM_Gs_CaReg',
+    SelectCode: code,
+    CateName: cateName,
+    OptTypeNum: optType,
+    RgrRowid: rowid,
+    RgrCode: rgr,
+    SelScodeCount: String(currentCount || 0),
+    NowCatCount: String(currentCount || 0),
+  });
+  const res = await fetch(`${HS_API}?RegCate=1&${params}`, {credentials:'include'});
+  if (!res.ok) return {ok:false, status:res.status};
   try {
-    await new Promise((res, rej) => {
-      const t = setTimeout(()=>rej(new Error('iframe 로드 타임아웃')), 20000);
-      iframe.onload = () => { clearTimeout(t); res(); };
-    });
-    // JS 초기화 대기 (catO/T select 서버값 적용 포함)
-    await new Promise(r => setTimeout(r, 2500));
-    const doc = iframe.contentDocument;
-    const results = [];
+    const data = await res.json();
+    return {ok: data.RsInsertUpdate === 1, data};
+  } catch(e) { return {ok:false, err:e.message}; }
+}
 
-    const judge = item.judge;
-    const isT  = judge === 'FIX_T'  || judge === 'FIX_ALL' || judge === 'FIX_MULTI';
-    const isO  = judge === 'FIX_O'  || judge === 'FIX_ALL' || judge === 'FIX_MULTI';
-    const isCB = judge === 'FIX_CB' || judge === 'FIX_ALL' || judge === 'FIX_MULTI';
+// 카테고리 삭제
+async function hsApiCateDel(rowid, rgr, code, optType) {
+  const params = new URLSearchParams({
+    SelCateTab: 'AM_Gs_CaReg',
+    nMode: 'RegCateDel',
+    SelScode: code,
+    OptTypeNum: optType,
+    RgrRowid: rowid,
+    RgrCode: rgr,
+  });
+  const res = await fetch(`${HS_API}?${params}`, {credentials:'include'});
+  if (!res.ok) return {ok:false, status:res.status};
+  try {
+    const data = await res.json();
+    return {ok: data.RsRegCateDel === 1, data};
+  } catch(e) { return {ok:false, err:e.message}; }
+}
 
-    // 현재 연결된 업종 읽기
-    const connectedT = new Set();
-    for (let i=1; i<=30; i++) {
-      const h = doc.querySelector(`input[name="SelectCatoryCodeTwo_${i}"]`);
-      if (h && h.value) connectedT.add(h.value.split('^')[0]);
+// 체크박스 토글 (check=true 체크, false 해제)
+// cbValue 포맷: "XX`Y`YY-YY`이름"  (예: "04`1`07-08`플라스틱")
+async function hsApiCbToggle(rgr, cbValue, check) {
+  const parts = cbValue.split('`');
+  if (parts.length < 4) return {ok:false, err:'invalid value'};
+  const scodeOne = parts[0];    // 04
+  const optType = parts[1];     // 1/2/5
+  const optCode = parts[2];     // 07-08
+  const optTxt = parts[3];       // 플라스틱
+  const params = new URLSearchParams({
+    SelCateTab: 'AM_Gs_CaReg',
+    SelSeaTab: 'AM_Gs_SeaDef',
+    nMode: check ? 'RegOptSelect' : 'DelOptSelect',
+    GoodsNum: '1',
+    RegCode: rgr,
+    ScodeOne: scodeOne,
+    OptTypeNum: optType,
+    OptCode: optCode,
+    OptTxt: optTxt,
+  });
+  const res = await fetch(`${HS_API}?${params}`, {credentials:'include'});
+  if (!res.ok) return {ok:false, status:res.status};
+  try {
+    const data = await res.json();
+    return {ok: true, data};
+  } catch(e) { return {ok:false, err:e.message}; }
+}
+
+// 상품의 현재 상태 (편집 페이지 fetch 후 파싱)
+async function hsFetchState(rgr) {
+  const url = `/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${rgr}&EditMode=1`;
+  const res = await fetch(url, {credentials:'include'});
+  if (!res.ok) return null;
+  const html = await res.text();
+  const rowidM = html.match(/RgrRowid:\s*'(\d+)'/);
+  const rgrRowid = rowidM ? rowidM[1] : null;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const oneVals = [], twoVals = [];
+  for (let i=1; i<=30; i++) {
+    const h = doc.querySelector(`input[name="SelectCatoryCodeOne_${i}"]`);
+    if (h && h.value) oneVals.push(h.value.split('^')[0]);
+    const h2 = doc.querySelector(`input[name="SelectCatoryCodeTwo_${i}"]`);
+    if (h2 && h2.value) twoVals.push(h2.value.split('^')[0]);
+  }
+  const CBR_L = /^(\d{2})`\d`(\d{2}-\d{2})`/;
+  const checkedValues = [];
+  let cbC = 0;
+  doc.querySelectorAll('input[type="checkbox"]').forEach(x => {
+    const m = (x.value||'').match(CBR_L);
+    if (!m) return;
+    if (x.hasAttribute('checked')) { cbC++; checkedValues.push(x.value); }
+  });
+  return {rowid: rgrRowid, o: oneVals, t: twoVals, cc: cbC, checked_values: checkedValues};
+}
+
+async function fixOne(item) {
+  const results = [];
+  const judge = item.judge;
+  const isT  = judge === 'FIX_T'  || judge === 'FIX_ALL' || judge === 'FIX_MULTI';
+  const isO  = judge === 'FIX_O'  || judge === 'FIX_ALL' || judge === 'FIX_MULTI';
+  const isCB = judge === 'FIX_CB' || judge === 'FIX_ALL' || judge === 'FIX_MULTI';
+
+  // rowid가 감사 단계에서 수집됐으면 그걸 사용, 아니면 즉시 fetch
+  let rowid = item.rowid;
+  let existingCheckedValues = item.checked_values || [];
+  let connectedT = new Set((item.t||'').split(',').filter(x=>x));
+  if (!rowid) {
+    const state = await hsFetchState(item.rgr);
+    if (!state) return 'fetch 실패';
+    rowid = state.rowid;
+    existingCheckedValues = state.checked_values;
+    connectedT = new Set(state.t);
+  }
+  if (!rowid) return 'rowid 없음';
+
+  // ============ 1. FIX_T: 누락 업종 병렬 추가 ============
+  if (isT) {
+    const missing = ['01','02','03','04','05','06','07','08','09'].filter(c => !connectedT.has(c));
+    if (missing.length) {
+      // 병렬로 동시에 9개 업종 추가 요청
+      const results_t = await Promise.all(
+        missing.map(code => hsApiCateAdd(rowid, item.rgr, code, '2', connectedT.size))
+      );
+      const ok_n = results_t.filter(r => r.ok).length;
+      results.push(`T+${ok_n}/${missing.length}`);
+    } else {
+      results.push('T이미완료');
     }
+  }
 
-    if (isT) {
-      const missing = ['01','02','03','04','05','06','07','08','09'].filter(c => !connectedT.has(c));
-      if (missing.length) {
-        for (const code of missing) {
-          const t1 = doc.getElementById('CateCodeT_1');
-          if (!t1) break;
-          t1.value = code;
-          t1.dispatchEvent(new Event('change'));
-          await new Promise(r => setTimeout(r, 400));
-          const btn = Array.from(doc.querySelectorAll('button')).find(b => {
-            const oc = b.getAttribute('onclick') || '';
-            return oc.includes('CateCodeT_4') && oc.includes("'2'");
-          });
-          if (btn) btn.click();
-          await new Promise(r => setTimeout(r, 500));
-        }
-        results.push(`T+${missing.length}업종`);
-      } else {
-        results.push('T이미완료');
-      }
+  // ============ 2. FIX_O: 상품별 3차 추가 ============
+  if (isO) {
+    let expectO3 = item.llm_o3;
+    if (!expectO3) {
+      const m = (item.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
+      if (m) expectO3 = m[1];
     }
+    if (expectO3) {
+      // 상품별 추가: SelectCode=<3차 전체 코드>, OptTypeNum=1
+      const r = await hsApiCateAdd(rowid, item.rgr, expectO3, '1', 0);
+      results.push(r.ok ? `O+${expectO3}` : `O실패(${expectO3})`);
+    }
+  }
 
-    if (isCB) {
-      const CBR = /^(\d{2})`\d`(\d{2}-\d{2})`/;
-      // 1) 기존 체크 전부 해제
-      const checked = Array.from(doc.querySelectorAll('input[type="checkbox"]:checked')).filter(x => CBR.test(x.value||''));
-      for (let i=0; i<checked.length; i++) {
-        checked[i].click();
-        if ((i+1) % 30 === 0) await new Promise(r => setTimeout(r, 400));
-        else await new Promise(r => setTimeout(r, 80));
+  // ============ 3. FIX_CB: 체크박스 해제 + 재체크 ============
+  if (isCB) {
+    // 3-1. 현재 체크된 모든 관심분야 해제 (병렬)
+    const CBR_F = /^(\d{2})`\d`(\d{2}-\d{2})`/;
+    const targetsToUncheck = existingCheckedValues.filter(v => CBR_F.test(v));
+    if (targetsToUncheck.length) {
+      // 10개씩 묶어서 병렬 처리 (서버 부하 조절)
+      let offOk = 0;
+      for (let i=0; i<targetsToUncheck.length; i+=10) {
+        const batch = targetsToUncheck.slice(i, i+10);
+        const results_cb = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, false)));
+        offOk += results_cb.filter(r => r.ok).length;
       }
-      // 2) LLM 제안 공간 있으면 재체크
+      // 3-2. LLM 지정 공간 재체크
+      let onOk = 0;
       if (item.llm_spaces && item.llm_spaces.length) {
-        await new Promise(r => setTimeout(r, 500));
-        let recheck = 0;
-        const allCb = Array.from(doc.querySelectorAll('input[type="checkbox"]')).filter(x => CBR.test(x.value||''));
-        for (const target of item.llm_spaces) {
-          // value 패턴: XX`d`target` (예: 05`5`05-01`)
-          const cands = allCb.filter(x => {
-            const m = (x.value||'').match(CBR);
-            return m && m[2] === target;
+        // 재체크 전에 현재 상태 재조회 (업종 추가 반영된 상태)
+        await new Promise(r=>setTimeout(r, 300));
+        const state = await hsFetchState(item.rgr);
+        if (state) {
+          // 업종별로 해당 공간 코드 찾아서 체크
+          const CBR_F2 = /^(\d{2})`\d`(\d{2}-\d{2})`(.*)$/;
+          // 편집 페이지 HTML에서 체크박스 전체 찾기 필요 → state.checked_values는 이미 체크된 것만
+          // 전체 체크박스 value는 별도 수집
+          const url2 = `/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`;
+          const res2 = await fetch(url2, {credentials:'include'});
+          const html2 = await res2.text();
+          const doc2 = new DOMParser().parseFromString(html2, 'text/html');
+          const allValues = [];
+          doc2.querySelectorAll('input[type="checkbox"]').forEach(x=>{
+            if (CBR_F.test(x.value||'')) allValues.push(x.value);
           });
-          for (const c of cands) {
-            if (!c.checked) { c.click(); recheck++; await new Promise(r => setTimeout(r, 80)); }
+          // LLM 제안 공간별로 매칭되는 value 찾아서 체크
+          const toCheck = [];
+          for (const target of item.llm_spaces) {
+            const matches = allValues.filter(v => {
+              const m = v.match(CBR_F2);
+              return m && m[2] === target;
+            });
+            toCheck.push(...matches);
+          }
+          for (let i=0; i<toCheck.length; i+=10) {
+            const batch = toCheck.slice(i, i+10);
+            const results_on = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, true)));
+            onOk += results_on.filter(r => r.ok).length;
           }
         }
-        results.push(`CB-${checked.length}+${recheck}`);
-      } else {
-        results.push(`CB-${checked.length}`);
       }
+      results.push(`CB-${offOk}+${onOk}`);
+    } else {
+      results.push('CB이미없음');
     }
-
-    if (isO && (item.llm_o3 || (item.reason && item.reason.includes('O3')))) {
-      // LLM 결과 우선, 없으면 reason에서 추출
-      let expectO3 = item.llm_o3;
-      if (!expectO3) {
-        const m = item.reason.match(/O3:(\d{2}-\d{2}-\d{3})/);
-        if (m) expectO3 = m[1];
-      }
-      if (expectO3) {
-        const parts = expectO3.split('-');
-        const c1 = parts[0];
-        const c2 = parts[0]+'-'+parts[1];
-        const c3 = expectO3;
-        // catO1
-        let sel = doc.getElementById('CateCodeO_1');
-        if (sel) { sel.value = c1; sel.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 600)); }
-        sel = doc.getElementById('CateCodeO_2');
-        if (sel) { sel.value = c2; sel.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 600)); }
-        sel = doc.getElementById('CateCodeO_3');
-        if (sel) { sel.value = c3; sel.dispatchEvent(new Event('change')); await new Promise(r => setTimeout(r, 400)); }
-        // 상품별 추가 버튼 클릭
-        const btn = Array.from(doc.querySelectorAll('button')).find(b => {
-          const oc = b.getAttribute('onclick') || '';
-          return oc.includes('CateCodeO_4') && oc.includes("'1'");
-        });
-        if (btn) {
-          btn.click();
-          await new Promise(r => setTimeout(r, 800));
-          results.push(`O+${c3}`);
-        } else {
-          results.push('O:버튼없음');
-        }
-      }
-    }
-
-    return results.join(',') || '변경없음';
-  } finally {
-    iframe.remove();
   }
+
+  return results.join(',') || '변경없음';
 }
 
 // ==================== 🔙 롤백 로직 ====================
 // 단일 상품의 체크박스를 백업 시점으로 되돌림
+// 롤백: 방법 B 기반 (체크박스 + 업종 + 상품별 전부 복원 가능)
 async function rollbackOne(bit) {
-  const iframe = document.createElement('iframe');
-  iframe.setAttribute('data-hs-audit', '1');
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1024px;height:768px;border:0;pointer-events:none;opacity:0.01';
-  iframe.src = `/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${bit.rgr}&EditMode=1`;
-  document.body.appendChild(iframe);
-  try {
-    await new Promise((res, rej) => {
-      const t = setTimeout(()=>rej(new Error('iframe 로드 타임아웃')), 20000);
-      iframe.onload = () => { clearTimeout(t); res(); };
-    });
-    await new Promise(r => setTimeout(r, 2500));
-    const doc = iframe.contentDocument;
-    const CBR = /^(\d{2})`\d`(\d{2}-\d{2})`/;
-    const beforeValues = new Set(bit.before && bit.before.checked_values || []);
+  const CBR_R = /^(\d{2})`\d`(\d{2}-\d{2})`/;
+  // 현재 상태 조회
+  const state = await hsFetchState(bit.rgr);
+  if (!state) return '상태 조회 실패';
+  const rowid = state.rowid;
+  if (!rowid) return 'rowid 없음';
 
-    // 1) 현재 체크된 관심분야 체크박스 모두 모음
-    const allCb = Array.from(doc.querySelectorAll('input[type="checkbox"]')).filter(x => CBR.test(x.value||''));
-    const currentlyChecked = allCb.filter(x => x.hasAttribute('checked') || x.checked);
+  const beforeO = new Set((bit.before && bit.before.o || '').split(',').filter(x=>x));
+  const beforeT = new Set((bit.before && bit.before.t || '').split(',').filter(x=>x));
+  const beforeCheckedValues = new Set(bit.before && bit.before.checked_values || []);
+  const currO = new Set(state.o);
+  const currT = new Set(state.t);
+  const currCheckedValues = new Set(state.checked_values);
 
-    let off=0, on=0;
-    // 2) 백업에 없는 현재 체크 → 해제
-    for (const cb of currentlyChecked) {
-      if (!beforeValues.has(cb.value)) {
-        cb.click(); off++;
-        if (off % 30 === 0) await new Promise(r => setTimeout(r, 400));
-        else await new Promise(r => setTimeout(r, 80));
-      }
-    }
-    // 3) 백업에 있는데 현재 꺼짐 → 체크
-    for (const cb of allCb) {
-      if (beforeValues.has(cb.value) && !cb.checked) {
-        cb.click(); on++;
-        if (on % 30 === 0) await new Promise(r => setTimeout(r, 400));
-        else await new Promise(r => setTimeout(r, 80));
-      }
-    }
-    return `CB 복원 · 해제 ${off} / 재체크 ${on}`;
-  } finally {
-    iframe.remove();
+  let logs = [];
+
+  // 1. 업종 T 복원
+  //   - 추가된 (현재O & 백업X) → 삭제
+  //   - 빠진 (백업O & 현재X) → 추가
+  const tToRemove = [...currT].filter(c => !beforeT.has(c));
+  const tToAdd = [...beforeT].filter(c => !currT.has(c));
+  if (tToRemove.length) {
+    const r = await Promise.all(tToRemove.map(c => hsApiCateDel(rowid, bit.rgr, c, '2')));
+    logs.push(`T-${r.filter(x=>x.ok).length}`);
   }
+  if (tToAdd.length) {
+    const r = await Promise.all(tToAdd.map(c => hsApiCateAdd(rowid, bit.rgr, c, '2', currT.size)));
+    logs.push(`T+${r.filter(x=>x.ok).length}`);
+  }
+
+  // 2. 상품별 O 복원 (catO1/2/3 전체)
+  const oToRemove = [...currO].filter(c => !beforeO.has(c));
+  const oToAdd = [...beforeO].filter(c => !currO.has(c));
+  if (oToRemove.length) {
+    const r = await Promise.all(oToRemove.map(c => hsApiCateDel(rowid, bit.rgr, c, '1')));
+    logs.push(`O-${r.filter(x=>x.ok).length}`);
+  }
+  if (oToAdd.length) {
+    const r = await Promise.all(oToAdd.map(c => hsApiCateAdd(rowid, bit.rgr, c, '1', currO.size)));
+    logs.push(`O+${r.filter(x=>x.ok).length}`);
+  }
+
+  // 3. 체크박스 복원 (value 전체 기반)
+  const cbToUncheck = [...currCheckedValues].filter(v => CBR_R.test(v) && !beforeCheckedValues.has(v));
+  const cbToCheck = [...beforeCheckedValues].filter(v => CBR_R.test(v) && !currCheckedValues.has(v));
+  if (cbToUncheck.length) {
+    let ok = 0;
+    for (let i=0; i<cbToUncheck.length; i+=10) {
+      const batch = cbToUncheck.slice(i, i+10);
+      const r = await Promise.all(batch.map(v => hsApiCbToggle(bit.rgr, v, false)));
+      ok += r.filter(x=>x.ok).length;
+    }
+    logs.push(`CB-${ok}`);
+  }
+  if (cbToCheck.length) {
+    let ok = 0;
+    for (let i=0; i<cbToCheck.length; i+=10) {
+      const batch = cbToCheck.slice(i, i+10);
+      const r = await Promise.all(batch.map(v => hsApiCbToggle(bit.rgr, v, true)));
+      ok += r.filter(x=>x.ok).length;
+    }
+    logs.push(`CB+${ok}`);
+  }
+
+  return logs.length ? logs.join(',') : '변경없음';
 }
 
 main().catch(e => addLog('치명적 오류: ' + e.message, 'err'));
