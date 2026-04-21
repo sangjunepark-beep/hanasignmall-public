@@ -1,11 +1,21 @@
 /**
- * 하나사인몰 어드민 실시간 감사 대시보드 (v2 · 2026-04-20)
+ * 하나사인몰 어드민 실시간 감사 대시보드 (v10 · 2026-04-21)
  *
- * 변경점 (v2):
- *   - 대시보드 크기 1.5배 확대 (width 520→760, font-size↑, log 높이↑)
- *   - 현재 GoodsList URL에서 카테고리/viewCnt 자동 감지
- *   - 검색 결과 전체 페이지 자동 감지 ("총 N건" + 페이지네이션 교차 확인)
- *   - 북마클릿 실행 친화적 (한 클릭으로 동작)
+ * v10 주요 변경점:
+ *   [LLM 판정] 4축 통합 (catO/catT/SelMemCat/SelOptCat2 전부)
+ *              상품명 + 매트릭스 주입 → 각 축별 keep/remove 지시 JSON 반환
+ *   [매트릭스] 대시보드 시작 시 9업종 연결된 샘플 상품 1건에서 자동 수집
+ *              HS_MATRIX 전역 캐시 (SelOptCat2 418개 + SelMemCat 30개)
+ *   [응답 파싱] selOptCat2 키 "업종01"/"01" 혼재 자동 정규화
+ *   [하위 호환] it.llm_o3/llm_spaces 유지 → 기존 자동수정 로직 그대로 동작
+ *
+ * v9 변경점 (유지):
+ *   [감사] 체크박스 type별 분리 수집 추가 (t1_cc, t2_cc, t5_cc, t2_by_industry, t5_list)
+ *          → 기존 cc(type 무관 전체 합산)는 오염된 숫자. 실제 과태깅 판단은 t5_cc(SelMemCat only) 기준
+ *   [판정] FIX_CB 기준 변경: t5_cc=0(관심분야 미연결) 또는 t5_cc>25(과태깅)
+ *          FIX_T2 신규: SelOptCat2 업종당 30+ 체크 (업종별 공간 과태깅)
+ *   [재검증] T9=9개 정확 집합 일치, CB재체크=type=5 전용+과태깅 잔존 감지
+ *           report에 after_t5/after_t2/after_t2_by_ind 필드 추가
  *
  * 사용법:
  *   - GoodsList 페이지에서 북마클릿 클릭 또는 Snippets로 실행
@@ -148,7 +158,7 @@ root.innerHTML = `
 </style>
 
 <div class="ha-header" id="ha-drag">
-  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사</div>
+  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7">v10</span></div>
   <div class="ha-ctrl">
     <button class="ha-btn" id="ha-min">─</button>
     <button class="ha-btn" id="ha-stop">■</button>
@@ -318,9 +328,12 @@ $('ha-close').onclick = () => { stopped = true; clearInterval(clockTimer); root.
   };
 })();
 
-// ================== 감사 로직 ==================
+// ================== 감사 로직 (v9) ==================
+// v9 변경점: 체크박스 type별 분리 수집 (type=1 상품세부 / type=2 업종×공간 / type=5 관심분야)
+//           기존 cc는 전체 체크 개수, 신규 t5_cc/t2_cc/t1_cc + t2_by_industry 로 세분화
 const G = {'01':'G1','02':'G2','03':'G3','04':'G4','05':'G5','06':'G6','07':'G7','08':'G8','09':'G9'};
 const CBR = /^(\d{2})`\d`(\d{2}-\d{2})`/;
+const CBR_TYPED = /^(\d{2})`(\d)`(\d{2}-\d{2})`/;  // v9: type 분리용
 
 // 현재 탭의 GoodsList 필터를 그대로 유지하면서 page만 교체
 // (판매상태·카테고리·기간 등 사용자가 지정한 모든 필터 보존)
@@ -430,8 +443,13 @@ async function auditOne(item) {
   const cd = {};
   const checked_values = [];
   let cbT=0, cbC=0;
+  // v9: type별 분리 수집
+  let t1_cc=0, t2_cc=0, t5_cc=0;
+  const t2_by_industry = {};
+  const t5_list = [];
   doc.querySelectorAll('input[type="checkbox"]').forEach(x => {
-    const m = (x.value||'').match(CBR);
+    const v = x.value||'';
+    const m = v.match(CBR);
     if (!m) return;
     cbT++;
     const k = G[m[1]] || ('X'+m[1]);
@@ -440,10 +458,30 @@ async function auditOne(item) {
     if (x.hasAttribute('checked')) {
       cd[k][1]++;
       cbC++;
-      checked_values.push(x.value);  // 전체 value 저장 (롤백·방법 B용)
+      checked_values.push(v);  // 전체 value 저장 (롤백·방법 B용)
+      // v9: type별 카운트
+      const tm = v.match(CBR_TYPED);
+      if (tm) {
+        const pfx = tm[1], typ = tm[2], sub = tm[3];
+        if (typ==='1') t1_cc++;
+        else if (typ==='2') {
+          t2_cc++;
+          if (!t2_by_industry[pfx]) t2_by_industry[pfx] = [];
+          t2_by_industry[pfx].push(sub);
+        }
+        else if (typ==='5') {
+          t5_cc++;
+          t5_list.push(pfx+'-'+sub);
+        }
+      }
     }
   });
-  return Object.assign(item, {o: oneVals.join(','), t: twoVals.join(','), cc: cbC, ct: cbT, cd, checked_values, rowid: rgrRowid});
+  return Object.assign(item, {
+    o: oneVals.join(','), t: twoVals.join(','),
+    cc: cbC, ct: cbT, cd, checked_values, rowid: rgrRowid,
+    // v9 추가 필드
+    t1_cc, t2_cc, t5_cc, t2_by_industry, t5_list
+  });
 }
 
 // ================== 판정 규칙 ==================
@@ -493,11 +531,16 @@ function judge(r) {
   else if (et instanceof Set && et.size) {
     for (const c of et) if (!tSet.has(c)) { issues.push('T'); break; }
   }
-  if (r.cc === 0) issues.push('CB');
-  else if (r.cc > 30) {
-    if (et === 'U9') {}
-    else if (tSet.size >= 7) { if (r.cc > 120) issues.push('CB'); }
-    else issues.push('CB');
+  // v9: 기존 r.cc(type=1/2/5 전부 합산, 오염됨) → r.t5_cc(SelMemCat만)로 교체
+  //     t5_cc=0 → 관심분야 미연결 / t5_cc>25 → 과태깅
+  const memCnt = (typeof r.t5_cc === 'number') ? r.t5_cc : (r.cc || 0);
+  if (memCnt === 0) issues.push('CB');
+  else if (memCnt > 25) issues.push('CB');
+  // v9 신규: SelOptCat2 업종별 공간 과다 (업종당 30+ 체크)
+  if (r.t2_by_industry) {
+    for (const pfx in r.t2_by_industry) {
+      if ((r.t2_by_industry[pfx]||[]).length > 30) { issues.push('T2'); break; }
+    }
   }
   const hasA = oSet.has('04-01');
   const eo3 = expectO3(name);
@@ -509,6 +552,7 @@ function judge(r) {
     if (codes.has('O1')) return 'FIX_O';
     if (codes.has('T')) return 'FIX_T';
     if (codes.has('CB')) return 'FIX_CB';
+    if (codes.has('T2')) return 'FIX_T2';  // v9 신규
   }
   if (codes.has('O1') && codes.has('T') && codes.has('CB')) return 'FIX_ALL';
   return 'FIX_MULTI';
@@ -979,9 +1023,57 @@ async function main(){
     addLog('JSON 클립보드에 복사됨', 'ok');
   };
 
-  // ============ LLM 판정 (Claude Haiku) ============
+  // ============ LLM 판정 (Claude Haiku) v10 ============
   function getApiKey() {
     return sessionStorage.getItem('hs_anthropic_key') || localStorage.getItem('hs_anthropic_key') || '';
+  }
+
+  // v10: 매트릭스 런타임 자동 수집 (9업종 연결된 샘플 상품에서 SelOptCat2 + SelMemCat 전체 덤프)
+  let HS_MATRIX = null;
+  async function buildRuntimeMatrix() {
+    if (HS_MATRIX) return HS_MATRIX;
+    let sampleRgr = '260223171857_3033';
+    // 현 RESULT에서 9업종 연결된 상품 우선 탐색 (없으면 기본)
+    if (RESULT.items && RESULT.items.length > 0) {
+      const nine = RESULT.items.find(it => (it.t||'').split(',').filter(x=>x).length === 9);
+      if (nine) sampleRgr = nine.rgr;
+    }
+    try {
+      const res = await fetch(`/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${sampleRgr}&EditMode=1`, {credentials:'include'});
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const m2 = {}, m5 = {};
+      doc.querySelectorAll('input[type="checkbox"]').forEach(x => {
+        const m = (x.value||'').match(/^(\d{2})`(\d)`(\d{2}-\d{2})`(.*?)`/);
+        if (!m) return;
+        const pfx = m[1], typ = m[2], sub = m[3], label = m[4];
+        if (typ === '2') {
+          if (!m2[pfx]) m2[pfx] = {};
+          m2[pfx][sub] = label;
+        } else if (typ === '5') {
+          if (!m5[pfx]) m5[pfx] = {};
+          m5[pfx][sub] = label;
+        }
+      });
+      HS_MATRIX = {SelOptCat2: m2, SelMemCat: m5, source_rgr: sampleRgr};
+      addLog(`🧩 매트릭스 수집 완료 · 업종 ${Object.keys(m2).length}개 · 공간그룹 ${Object.keys(m5).length}개 · 샘플 ${sampleRgr}`, 'sys');
+      return HS_MATRIX;
+    } catch(e) {
+      addLog('매트릭스 수집 실패: ' + e.message, 'err');
+      return null;
+    }
+  }
+
+  // v10: LLM 응답의 selOptCat2 키를 "업종01" / "01" 혼재 → "01"로 정규화
+  function normalizeT2Keys(obj) {
+    if (!obj || typeof obj !== 'object') return {};
+    const out = {};
+    for (const k in obj) {
+      const m = k.match(/(\d{2})$/);
+      const clean = m ? m[1] : k;
+      out[clean] = obj[k];
+    }
+    return out;
   }
 
   const LLM_SYSTEM = `당신은 하나사인몰 어드민 카테고리 정리 도우미입니다.
@@ -1077,18 +1169,151 @@ JSON 배열만. 다른 텍스트·마크다운 금지. o3가 빈 문자열("")�
   {"rgr":"240207143943_4777","o3":"","spaces":["08-01","08-03","03-01"],"reason":"월프레임 이미 01-13 등록"}
 ]`;
 
+  // ============ v10 시스템 프롬프트 (4축 통합 + 매트릭스) ============
+  const LLM_SYSTEM_V10 = `당신은 하나사인몰 상품 카테고리 4축 통합 판정관입니다.
+각 상품의 상품명과 현재 상태(catO, catT, SelMemCat, SelOptCat2 업종별 체크)를 분석해
+4축 모두에 대해 유지/추가/제거 지시를 JSON 배열로 반환하세요.
+
+[★ catO 2차 코드 엄격 매핑 (이 안에서만 제안)]
+01 게시판: 01-01 슬림디자인 · 01-02 안전강화유리 · 01-03 디자인 · 01-04 크리스탈
+  · 01-05 아크릴 · 01-06 슬림자석 · 01-07 우드 · 01-08 알미늄 · 01-09 갈바
+  · 01-10 게시판구성품 · 01-11 자석프레임 · 01-13 포켓/월프레임 · 01-14 메모보드
+  · 01-15 액자 · 01-16 슬림업 · 01-17 슬림안전보건
+02 안내판: 02-01 금연/CCTV · 02-02 주의/금지 · 02-03 이용수칙 · 02-04 유도안내
+  · 02-05 매립표지판 · 02-06 소방안전 · 02-07 MSDS · 02-08 법령상품 · 02-09 기타안내
+04 입간판: 04-01 A형 · 04-02 스텐 · 04-03 오뚜기
+  04-01 3차: 001 청소중 / 002 공사중 / 004 식당/카페 / 007 주의 / 008 금지 / 009 주차
+          / 011 CCTV/금연 / 012 학교 / 013 기타
+05 현수막/배너: 05-01~05-06
+08 도로안전용품: 08-01~08-29
+09 각종물품: 09-01 명패 · 09-06 매트 · 09-07 기타 · 09-08 쇼케이스 · 09-09 사무실용품 · 09-10 현판
+10 인쇄물/스티커: 10-02 주차스티커 · 10-03 경고장 · 10-04 자전거스티커 · 10-05 각종인쇄물 · 10-06 안전스티커
+
+[★ 상품명 키워드 → catO 매핑 (엄격)]
+- "아크릴 게시판" → 01-05
+- "슬림자석게시판" → 01-06  · "슬림안전보건/산업안전보건" → 01-17
+- "개폐식 액자" / "액자 프레임" → 01-15 · "월프레임" / "포켓" → 01-13
+- "자석프레임" → 01-11 · "메모보드" → 01-14
+- "A형 입간판 주차" → 04-01-009 · "A형 CCTV/금연" → 04-01-011
+- "주차스티커" → 10-02
+- 상품명 핵심 명사를 반드시 반영. 기본값 "01-01" 절대 금지
+
+[★ catT 업종 (10개)]
+01 학교/학원 · 02 식당/카페 · 03 아파트 · 04 호텔/펜션 · 05 병원/요양/약국
+· 06 회사/공장 · 07 공공기관 · 08 헬스/레저 · 09 기타업종 · 12 개인결제
+
+[catT 판단 원칙]
+- 범용(게시판/안내판/액자) → 9개 전체 연결 (12 제외)
+- 특수(산업안전/의료용/학교용) → 관련 업종만 2~4개
+- 주차 관련 → 03(아파트) + 06(회사) + 07(공공) 중심
+
+[★ SelMemCat (30개) — 관심분야 공간그룹]
+사용자 매트릭스에서 제공됨. 오직 제공된 키만 사용.
+
+[SelMemCat 판단 원칙 (매우 중요)]
+- 범용 상품: 반드시 5~20개 체크 (공간그룹 02~08 중 관련 있는 것 각 1~4)
+- 특수 상품: 2~5개
+- 절대 0개로 두지 말 것 = 검색 필터 미노출
+- 현재 체크 중 상품 성격에 맞지 않는 그룹은 remove
+
+[★ SelOptCat2 (9업종 × 44~47개 공간)]
+사용자 매트릭스에서 제공됨. 오직 제공된 키만 사용.
+
+[SelOptCat2 판단 원칙]
+- 업종당 3~12개 적정
+- 상품이 실제 놓일 공간만 선택 (공용통로/로비/사무실/카운터/엘리베이터/주차장 등 공용 공간 중심)
+- 현재 체크 중 상품 성격에 맞지 않는 것(예: 약국에 헬스장·독서실)은 반드시 remove
+- 업종당 30+ 체크는 과태깅 → 핵심만 남기고 remove
+
+[출력 JSON 배열 only. 마크다운/텍스트 금지]
+[
+  {
+    "rgr":"240507130012_6182",
+    "catO":{"o1":"01","o2":"01-05","o3":""},
+    "catT_keep":["01","03","04","05","06","07","08","09"],
+    "catT_remove":["02"],
+    "selMemCat_keep":["02-01","03-01","04-01","06-01","06-02","08-01"],
+    "selMemCat_remove":[],
+    "selOptCat2_keep":{"01":["05-03","05-05","05-13"],"03":["05-01","05-09"]},
+    "selOptCat2_remove":{"01":["05-20","05-21"]},
+    "reason":"아크릴 게시판: 범용, 식당 제외. 업종별 공용공간만 유지."
+  }
+]
+
+[출력 엄수]
+- catT_keep 는 반드시 2자리 문자열 배열 ("01","02"...)
+- selOptCat2_keep 의 키는 반드시 2자리 "01"~"09" (접두사 "업종" 금지)
+- selOptCat2_remove 에 현재 체크된 부적합 코드 포함. 없으면 빈 객체
+- o3 가 불명이면 빈 문자열
+`;
+
+  // v10 userPrompt: 매트릭스 + 현재 상태 덤프
+  function buildUserPromptV10(batch, matrix) {
+    const t2M = matrix?.SelOptCat2 || {};
+    const t5M = matrix?.SelMemCat || {};
+    const t5Dump = Object.entries(t5M).map(([pfx,obj])=>
+      `[${pfx}군] ${Object.entries(obj).map(([k,v])=>`${k}:${v}`).join(' / ')}`
+    ).join('\n');
+    const t2Dump = Object.entries(t2M).map(([pfx,obj])=>
+      `[업종${pfx}] ${Object.entries(obj).map(([k,v])=>`${k}:${v}`).join(' / ')}`
+    ).join('\n');
+
+    const lines = batch.map((r,i) => {
+      const t2Cur = Object.entries(r.t2_by_industry||{}).map(([pfx,arr])=>{
+        const mm = t2M[pfx] || {};
+        return `  업종${pfx}(${arr.length}): ${arr.map(s=>`${s}`).join(',')}`;
+      }).join('\n');
+      return `${i+1}. rgr=${r.rgr}
+  상품명: ${r.name}
+  catO: ${r.o||'(없음)'}
+  catT: ${r.t||'(없음)'}
+  SelMemCat(${r.t5_cc||0}): ${(r.t5_list||[]).join(',') || '(없음)'}
+  SelOptCat2(${r.t2_cc||0}):
+${t2Cur || '  (업종 미연결)'}`;
+    }).join('\n\n---\n\n');
+
+    return `=== 매트릭스 (이 키만 사용, 환각 금지) ===
+SelMemCat:
+${t5Dump}
+
+SelOptCat2 (각 업종의 공간 화이트리스트):
+${t2Dump}
+
+=== 판정 대상 ${batch.length}건 ===
+${lines}
+
+=== 지시 ===
+각 상품에 대해 4축 전체 판정. JSON 배열만 출력.`;
+  }
+
   function buildUserPrompt(batch){
     const lines = batch.map((r,i) => {
-      // 현재 O에서 1차 카테고리 코드 추출
       const oList = (r.o||'').split(',').filter(x=>x);
       const cat1 = (oList[0]||'').split('-')[0];
       const cat1Name = O1_MAP[cat1] || '(미등록)';
-      return `${i+1}. [${r.rgr}] ${r.name}\n   현재 1차: ${cat1} ${cat1Name} · 현재 O: ${r.o||'(없음)'} · T: ${r.t||'미연결'} · cc: ${r.cc||0}`;
+      // v9: t5/t2 분리 정보 전달 (과태깅 판단용)
+      const t5 = r.t5_cc ?? 0;
+      const t2Total = r.t2_cc ?? 0;
+      const t2Summary = r.t2_by_industry ? Object.entries(r.t2_by_industry).map(([k,v])=>`${k}:${(v||[]).length}`).join('/') : '';
+      const flags = [];
+      if (t5 === 0) flags.push('관심분야미연결');
+      else if (t5 > 25) flags.push('관심분야과태깅');
+      if (t2Summary) {
+        const overInd = Object.entries(r.t2_by_industry).filter(([k,v])=>(v||[]).length > 30).map(([k])=>k);
+        if (overInd.length) flags.push('업종'+overInd.join(',')+'공간과다');
+      }
+      return `${i+1}. [${r.rgr}] ${r.name}
+   1차: ${cat1} ${cat1Name} · O: ${r.o||'(없음)'} · T: ${r.t||'미연결'}
+   SelMemCat=${t5} · SelOptCat2=${t2Total}${t2Summary?' ('+t2Summary+')':''}${flags.length?' · ⚠'+flags.join(','):''}`;
     });
-    return `각 상품의 현재 1차 카테고리를 존중하며 그 안에서 적합한 2/3차 코드를 제안하세요.\n\n${lines.join('\n')}`;
+    return `각 상품의 현재 1차를 존중하며 적합한 o3와 SelMemCat 공간을 제안.
+관심분야(SelMemCat)가 "미연결" 또는 "과태깅"이면 상품명에 맞는 2~6개 공간 코드를 spaces에 반드시 포함.
+업종별 공간 과다는 현재 v9에서 정리 대상이 아니니 spaces에는 관심분야 코드(type=5)만 넣을 것.
+
+${lines.join('\n')}`;
   }
 
-  async function callClaude(apiKey, userPrompt){
+  async function callClaude(apiKey, userPrompt, systemPrompt, maxTokens){
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{
@@ -1099,8 +1324,8 @@ JSON 배열만. 다른 텍스트·마크다운 금지. o3가 빈 문자열("")�
       },
       body: JSON.stringify({
         model:'claude-haiku-4-5-20251001',
-        max_tokens: 2048,
-        system: LLM_SYSTEM,
+        max_tokens: maxTokens || 2048,
+        system: systemPrompt || LLM_SYSTEM,
         messages: [{role:'user', content: userPrompt}],
       }),
     });
@@ -1132,25 +1357,52 @@ JSON 배열만. 다른 텍스트·마크다운 금지. o3가 빈 문자열("")�
     let done = 0, fail = 0;
     addLog(`🧠 LLM 판정 시작 · 대상 ${targets.length}건 · 배치 ${BATCH}개`, 'sys');
 
-    for (let i = 0; i < targets.length; i += BATCH) {
-      const batch = targets.slice(i, i + BATCH);
+    // v10: 매트릭스 먼저 확보 (9업종 샘플 상품 1회 fetch)
+    const matrix = await buildRuntimeMatrix();
+    if (!matrix) { addLog('매트릭스 없음 · v9 호환 모드로 진행', 'warn'); }
+
+    // v10은 배치 4~5건 (한 건당 데이터 크기 커서 8 유지 어려움)
+    const V10_BATCH = matrix ? 5 : BATCH;
+    for (let i = 0; i < targets.length; i += V10_BATCH) {
+      const batch = targets.slice(i, i + V10_BATCH);
       $('ha-llm-status').textContent = `${done}/${targets.length} 처리 중...`;
       try {
-        const text = await callClaude(apiKey, buildUserPrompt(batch));
-        const arr = extractJSON(text);
+        let arr;
+        if (matrix) {
+          // v10 경로
+          const text = await callClaude(apiKey, buildUserPromptV10(batch, matrix), LLM_SYSTEM_V10, 3500);
+          arr = extractJSON(text);
+        } else {
+          // v9 호환 fallback
+          const text = await callClaude(apiKey, buildUserPrompt(batch));
+          arr = extractJSON(text);
+        }
         for (const a of arr) {
           const it = RESULT.items.find(x => x.rgr === a.rgr);
-          if (it) {
-            // 빈 문자열이면 o3 미할당 (변경 불필요로 처리)
+          if (!it) continue;
+          if (matrix) {
+            // v10: 4축 전체 저장 + 기존 필드 호환 매핑
+            it.llm_catO = a.catO || {};
+            it.llm_catT_keep = a.catT_keep || [];
+            it.llm_catT_remove = a.catT_remove || [];
+            it.llm_selMemCat_keep = a.selMemCat_keep || [];
+            it.llm_selMemCat_remove = a.selMemCat_remove || [];
+            it.llm_selOptCat2_keep = normalizeT2Keys(a.selOptCat2_keep);
+            it.llm_selOptCat2_remove = normalizeT2Keys(a.selOptCat2_remove);
+            it.llm_reason = a.reason || '';
+            // 하위 호환: 기존 자동수정 로직이 쓰는 필드
+            it.llm_o3 = (a.catO && a.catO.o3) || (a.catO && a.catO.o2) || null;
+            it.llm_spaces = it.llm_selMemCat_keep;
+          } else {
             it.llm_o3 = (a.o3 && a.o3.length > 0) ? a.o3 : null;
             it.llm_spaces = a.spaces || [];
             it.llm_reason = a.reason || '';
-            done++;
           }
+          done++;
         }
-        addLog(`[LLM] 배치 ${i/BATCH+1} · ${batch.length}건 판정 완료`, 'ok');
+        addLog(`[LLM v10] 배치 ${Math.floor(i/V10_BATCH)+1} · ${batch.length}건 판정 완료`, 'ok');
       } catch(e) {
-        addLog(`[LLM ERR] 배치 ${i/BATCH+1}: ${e.message}`, 'err');
+        addLog(`[LLM ERR] 배치 ${Math.floor(i/V10_BATCH)+1}: ${e.message}`, 'err');
         fail += batch.length;
       }
       await new Promise(r => setTimeout(r, 300));
@@ -1225,27 +1477,49 @@ JSON 배열만. 다른 텍스트·마크다운 금지. o3가 빈 문자열("")�
       for (const {it, s} of states) {
         done++;
         if (!s) { report.push({rgr:it.rgr, status:'fetch_fail'}); continue; }
-        // 검증: FIX_T면 9업종 연결됐나, FIX_O면 llm_o3 들어갔나, FIX_CB면 llm_spaces 체크됐나
+        // v9 엄밀 검증: 각 축의 "실제 수정 완료" 여부 판정
         const checks = [];
+        // T9: 9개 업종 집합 일치 (단순 개수가 아닌 정확한 셋)
         if (['FIX_T','FIX_ALL','FIX_MULTI'].includes(it.judge)) {
-          checks.push({name:'T9', ok: s.t.length >= 9});
+          const tSet = new Set(s.t);
+          const expected9 = ['01','02','03','04','05','06','07','08','09'];
+          const missing = expected9.filter(c => !tSet.has(c));
+          checks.push({name:'T9', ok: missing.length===0, detail: missing.length ? '누락 '+missing.join(',') : '9개 완전'});
         }
+        // O3: llm_o3 포함 여부
         if (['FIX_O','FIX_ALL','FIX_MULTI'].includes(it.judge) && it.llm_o3) {
-          checks.push({name:`O3(${it.llm_o3})`, ok: s.o.includes(it.llm_o3)});
+          const hasCode = s.o.includes(it.llm_o3);
+          checks.push({name:'O3('+it.llm_o3+')', ok: hasCode, detail: hasCode ? '등록' : '누락'});
         }
-        if (['FIX_CB','FIX_ALL','FIX_MULTI'].includes(it.judge) && it.llm_spaces && it.llm_spaces.length) {
-          const CBR_V = /^(\d{2})`\d`(\d{2}-\d{2})`/;
-          const currSpaces = new Set();
-          s.checked_values.forEach(v => { const m=v.match(CBR_V); if(m) currSpaces.add(m[2]); });
-          const matched = it.llm_spaces.filter(sp => currSpaces.has(sp)).length;
-          checks.push({name:'CB재체크', ok: matched === it.llm_spaces.length, detail:`${matched}/${it.llm_spaces.length}`});
+        // CB재체크: type=5 전용 + 과태깅(>25) 잔존 감지
+        if (['FIX_CB','FIX_ALL','FIX_MULTI'].includes(it.judge)) {
+          const memCnt = (typeof s.t5_cc === 'number') ? s.t5_cc : 0;
+          const overTag = memCnt > 25;
+          let memOk = true, detail = 't5='+memCnt;
+          if (it.llm_spaces && it.llm_spaces.length) {
+            const currSpaces = new Set(s.t5_list || []);
+            const matched = it.llm_spaces.filter(sp => currSpaces.has(sp)).length;
+            memOk = (matched === it.llm_spaces.length) && !overTag && memCnt > 0;
+            detail = '매치 '+matched+'/'+it.llm_spaces.length+' · t5='+memCnt + (overTag?' (과태깅!)':'');
+          } else {
+            memOk = memCnt > 0 && !overTag;
+            detail = 't5='+memCnt + (overTag?' (과태깅)':memCnt===0?' (미연결)':'');
+          }
+          checks.push({name:'CB재체크', ok: memOk, detail});
         }
         const okN = checks.filter(c=>c.ok).length;
         const status = okN === checks.length ? 'full' : (okN > 0 ? 'partial' : 'none');
         if (status==='full') fullOk++;
         else if (status==='partial') partial++;
         else nothing++;
-        report.push({rgr:it.rgr, name:it.name, judge:it.judge, status, checks, after_t: s.t.length, after_cc: s.cc});
+        report.push({
+          rgr:it.rgr, name:it.name, judge:it.judge, status, checks,
+          after_t: s.t.length, after_cc: s.cc,
+          // v9 추가 필드
+          after_t5: s.t5_cc ?? 0,
+          after_t2: s.t2_cc ?? 0,
+          after_t2_by_ind: s.t2_by_industry ?? {}
+        });
         $('ha-rb-status').textContent = `${done}/${fixItems.length} · 완료 ${fullOk} · 부분 ${partial} · 미반영 ${nothing}`;
       }
     }
@@ -1541,14 +1815,38 @@ async function hsFetchState(rgr) {
     if (h2 && h2.value) twoVals.push(h2.value.split('^')[0]);
   }
   const CBR_L = /^(\d{2})`\d`(\d{2}-\d{2})`/;
+  const CBR_L_TYPED = /^(\d{2})`(\d)`(\d{2}-\d{2})`/;  // v9 type 분리
   const checkedValues = [];
   let cbC = 0;
+  // v9: type별 분리
+  let t1_cc=0, t2_cc=0, t5_cc=0;
+  const t2_by_industry = {};
+  const t5_list = [];
   doc.querySelectorAll('input[type="checkbox"]').forEach(x => {
-    const m = (x.value||'').match(CBR_L);
+    const v = x.value||'';
+    const m = v.match(CBR_L);
     if (!m) return;
-    if (x.hasAttribute('checked')) { cbC++; checkedValues.push(x.value); }
+    if (!x.hasAttribute('checked')) return;
+    cbC++;
+    checkedValues.push(v);
+    const tm = v.match(CBR_L_TYPED);
+    if (tm) {
+      const pfx = tm[1], typ = tm[2], sub = tm[3];
+      if (typ==='1') t1_cc++;
+      else if (typ==='2') {
+        t2_cc++;
+        if (!t2_by_industry[pfx]) t2_by_industry[pfx] = [];
+        t2_by_industry[pfx].push(sub);
+      }
+      else if (typ==='5') { t5_cc++; t5_list.push(pfx+'-'+sub); }
+    }
   });
-  return {rowid: rgrRowid, o: oneVals, t: twoVals, cc: cbC, checked_values: checkedValues};
+  return {
+    rowid: rgrRowid, o: oneVals, t: twoVals,
+    cc: cbC, checked_values: checkedValues,
+    // v9 추가
+    t1_cc, t2_cc, t5_cc, t2_by_industry, t5_list
+  };
 }
 
 async function fixOne(item) {
