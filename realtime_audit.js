@@ -1314,25 +1314,36 @@ ${lines}
 ${lines.join('\n')}`;
   }
 
+  // v10.3: 429(rate limit) 감지 시 Retry-After 헤더 또는 30초 대기 후 재시도 (최대 3회)
   async function callClaude(apiKey, userPrompt, systemPrompt, maxTokens){
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method:'POST',
-      headers:{
-        'content-type':'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version':'2023-06-01',
-        'anthropic-dangerous-direct-browser-access':'true',
-      },
-      body: JSON.stringify({
-        model:'claude-haiku-4-5-20251001',
-        max_tokens: maxTokens || 2048,
-        system: systemPrompt || LLM_SYSTEM,
-        messages: [{role:'user', content: userPrompt}],
-      }),
+    const body = JSON.stringify({
+      model:'claude-haiku-4-5-20251001',
+      max_tokens: maxTokens || 2048,
+      system: systemPrompt || LLM_SYSTEM,
+      messages: [{role:'user', content: userPrompt}],
     });
-    if (!res.ok) throw new Error('API ' + res.status + ': ' + (await res.text()).slice(0,200));
-    const j = await res.json();
-    return j.content[0].text;
+    const headers = {
+      'content-type':'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true',
+    };
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {method:'POST', headers, body});
+      if (res.ok) {
+        const j = await res.json();
+        return j.content[0].text;
+      }
+      if (res.status === 429) {
+        const retryAfter = parseInt(res.headers.get('retry-after') || '30');
+        const waitSec = Math.min(retryAfter, 60);
+        addLog(`⏳ Rate limit(429) · ${waitSec}초 대기 후 재시도 (시도 ${attempt}/3)`, 'warn');
+        await new Promise(r => setTimeout(r, waitSec * 1000));
+        continue;
+      }
+      throw new Error('API ' + res.status + ': ' + (await res.text()).slice(0,200));
+    }
+    throw new Error('429 재시도 3회 실패');
   }
 
   function extractJSON(text){
@@ -1411,7 +1422,8 @@ ${lines.join('\n')}`;
         addLog(`[LLM ERR] 배치 ${Math.floor(i/V10_BATCH)+1}: ${e.message}`, 'err');
         fail += batch.length;
       }
-      await new Promise(r => setTimeout(r, 300));
+      // v10.3: 배치 간격 증가 (300ms → 2000ms) — Anthropic tier 1 분당 50 RPM 여유 확보
+      await new Promise(r => setTimeout(r, 2000));
     }
 
     $('ha-llm-run').disabled = false;
