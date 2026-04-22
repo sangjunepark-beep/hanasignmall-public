@@ -828,33 +828,57 @@ async function main(){
     const hasO = ['FIX_O','FIX_ALL','FIX_MULTI'].includes(j);
     const hasCB = ['FIX_CB','FIX_ALL','FIX_MULTI'].includes(j);
 
-    // LLM 결과 있으면 우선 사용
+    // v10.7 add/remove 필드 우선 사용
     const orig = RESULT.items.find(x => x.rgr === r.rgr);
     const llmO3 = orig && orig.llm_o3;
-    const llmSpaces = orig && orig.llm_spaces;
     const llmReason = orig && orig.llm_reason;
+    const memAdd = (orig && orig.llm_selMemCat_add) || [];
+    const memRm  = (orig && orig.llm_selMemCat_remove) || [];
+    const t2Add  = (orig && orig.llm_selOptCat2_add) || {};
+    const t2Rm   = (orig && orig.llm_selOptCat2_remove) || {};
+    const tAdd   = (orig && orig.llm_catT_add) || [];
+    const tRm    = (orig && orig.llm_catT_remove) || [];
+    const hasLLM = !!(orig && orig.llm_reason);
 
-    if (hasT) {
+    // T 제안 — LLM add/remove 있으면 그걸로
+    if (hasLLM && (tAdd.length || tRm.length)) {
+      const parts = [];
+      if (tAdd.length) parts.push('+' + tAdd.map(c=>T1_MAP[c]||c).join(','));
+      if (tRm.length)  parts.push('-' + tRm.map(c=>T1_MAP[c]||c).join(','));
+      tProp = '🧠 ' + parts.join(' / ');
+    } else if (hasT) {
       const allT = ['01','02','03','04','05','06','07','08','09'];
       const missing = allT.filter(c => !tCodes.includes(c));
-      if (missing.length) tProp = `9업종 전체 연결 (${missing.length}개 추가: ${missing.map(c=>T1_MAP[c]).join(', ')})`;
+      if (missing.length) tProp = `9업종 기본 연결 (${missing.length}개 추가)`;
       else tProp = '유지';
+    } else if (hasLLM) {
+      tProp = '유지';
     }
-    if (hasO) {
-      if (llmO3) {
-        oProp = `🧠 + ${labelO(llmO3)}${llmReason ? '\n(' + llmReason.slice(0,40) + ')' : ''}`;
-      } else {
-        const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
-        oProp = m ? `+ ${labelO(m[1])}` : '상품별 3차 보완 필요 (🧠 LLM 판정 권장)';
-      }
+
+    // O 제안
+    if (llmO3) {
+      oProp = `🧠 + ${labelO(llmO3)}${llmReason ? '\n(' + llmReason.slice(0,50) + ')' : ''}`;
+    } else if (hasO) {
+      const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
+      oProp = m ? `+ ${labelO(m[1])}` : '상품별 3차 보완 필요 (🧠 LLM 판정 권장)';
+    } else if (hasLLM) {
+      oProp = '유지';
     }
-    if (hasCB) {
-      if (llmSpaces && llmSpaces.length) {
-        const labeled = llmSpaces.map(labelSpace);
-        cbProp = `🧠 해제 후 ${llmSpaces.length}개 공간 재체크:\n${labeled.slice(0,6).join('\n')}${llmSpaces.length>6?'\n...':''}`;
-      } else {
-        cbProp = `0 (체크 ${r.cc||0}개 전체 해제 · 🧠 LLM 판정 권장)`;
-      }
+
+    // CB 제안 — v10.7 SelMemCat + SelOptCat2 add/remove 통합 표기
+    const cbLines = [];
+    if (memAdd.length) cbLines.push(`SelMemCat 추가 ${memAdd.length}: ${memAdd.slice(0,5).map(labelSpace).join(', ')}${memAdd.length>5?'...':''}`);
+    if (memRm.length)  cbLines.push(`SelMemCat 해제 ${memRm.length}: ${memRm.slice(0,5).map(labelSpace).join(', ')}${memRm.length>5?'...':''}`);
+    const t2AddCnt = Object.values(t2Add).reduce((a,b)=>a+(b||[]).length, 0);
+    const t2RmCnt  = Object.values(t2Rm).reduce((a,b)=>a+(b||[]).length, 0);
+    if (t2AddCnt) cbLines.push(`업종별공간 추가 ${t2AddCnt}개`);
+    if (t2RmCnt)  cbLines.push(`업종별공간 해제 ${t2RmCnt}개`);
+    if (cbLines.length) {
+      cbProp = '🧠 (현재 유지 + 손 댈 곳만)\n' + cbLines.join('\n');
+    } else if (hasLLM) {
+      cbProp = '🧠 변경 없음 (현재 상태 적절)';
+    } else if (hasCB) {
+      cbProp = `🧠 LLM 판정 권장 (현재 체크 ${r.cc||0}개)`;
     }
     return {oProp, tProp, cbProp, tCurrent};
   }
