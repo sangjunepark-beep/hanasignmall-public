@@ -1,5 +1,17 @@
 /**
- * 하나사인몰 어드민 실시간 감사 대시보드 (v10.6 · 2026-04-22)
+ * 하나사인몰 어드민 실시간 감사 대시보드 (v10.7 · 2026-04-22)
+ *
+ * v10.7 대전환 — "뒤엎기" 금지. "손 댈 곳만 손 대자"
+ *   [LLM 프롬프트] keep/remove → add/remove 구조 (현재 체크 99% 존중)
+ *                 "2~6개 축소 지향" 가이드 전면 제거
+ *                 "명백히 잘못된 것만 remove · 꼭 필요한데 빠진 것만 add"
+ *   [fixOne] "type=5 전체 해제 후 재체크" 로직 완전 삭제
+ *           LLM 명시 add만 체크, remove만 해제
+ *   [판정 기준 완화] t5_cc>25 과태깅 자동 판정 제거 (내용 판단은 LLM에 위임)
+ *                   업종당 30+ 과태깅 자동 판정 제거
+ *   [재검증] add/remove 각각 완료 여부 체크
+ *
+ * v10.6 유지: 롤백 3중 안전장치
  *
  * v10.6 변경점 (사고 재발 방지):
  *   [백업] before 필드 명시 복사 + 빈문자열 기본값 (undefined 저장 사고 방지)
@@ -165,7 +177,7 @@ root.innerHTML = `
 </style>
 
 <div class="ha-header" id="ha-drag">
-  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7">v10.6</span></div>
+  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7">v10.7</span></div>
   <div class="ha-ctrl">
     <button class="ha-btn" id="ha-min">─</button>
     <button class="ha-btn" id="ha-stop">■</button>
@@ -538,17 +550,11 @@ function judge(r) {
   else if (et instanceof Set && et.size) {
     for (const c of et) if (!tSet.has(c)) { issues.push('T'); break; }
   }
-  // v9: 기존 r.cc(type=1/2/5 전부 합산, 오염됨) → r.t5_cc(SelMemCat만)로 교체
-  //     t5_cc=0 → 관심분야 미연결 / t5_cc>25 → 과태깅
+  // v10.7 판정 완화: SelMemCat 0개일 때만 FIX_CB (과태깅 판정은 LLM 검수로 미룸)
+  // 범용 사인(금지/주의류)은 체크 많아도 정상일 수 있어 수치 기반 과태깅 판정 제거
   const memCnt = (typeof r.t5_cc === 'number') ? r.t5_cc : (r.cc || 0);
-  if (memCnt === 0) issues.push('CB');
-  else if (memCnt > 25) issues.push('CB');
-  // v9 신규: SelOptCat2 업종별 공간 과다 (업종당 30+ 체크)
-  if (r.t2_by_industry) {
-    for (const pfx in r.t2_by_industry) {
-      if ((r.t2_by_industry[pfx]||[]).length > 30) { issues.push('T2'); break; }
-    }
-  }
+  if (memCnt === 0) issues.push('CB');  // 관심분야 미연결만 FIX 대상
+  // v10.7: 과태깅(t5>25), SelOptCat2 과다(업종당 30+) 판정 제거 → LLM이 remove 지시로 처리
   const hasA = oSet.has('04-01');
   const eo3 = expectO3(name);
   if (hasA && eo3 && !Array.from(oSet).some(x => x.startsWith(eo3))) issues.push('O1');
@@ -1178,11 +1184,22 @@ JSON 배열만. 다른 텍스트·마크다운 금지. o3가 빈 문자열("")�
 ]`;
 
   // ============ v10 시스템 프롬프트 (4축 통합 + 매트릭스) ============
-  const LLM_SYSTEM_V10 = `당신은 하나사인몰 상품 카테고리 4축 통합 판정관입니다.
-각 상품의 상품명과 현재 상태(catO, catT, SelMemCat, SelOptCat2 업종별 체크)를 분석해
-4축 모두에 대해 유지/추가/제거 지시를 JSON 배열로 반환하세요.
+  // ============ v10.7 LLM 시스템 프롬프트 (add/remove 원칙) ============
+  // 핵심 원칙: 현재 상태 최대한 존중. "뒤엎기" 금지.
+  //           - 상품 성격에 명백히 안 맞는 것만 remove
+  //           - 상품 성격상 꼭 필요한데 빠진 것만 add
+  //           - 나머지는 건드리지 말 것
+  const LLM_SYSTEM_V10 = `당신은 하나사인몰 상품 카테고리 4축 "정리 도우미"입니다.
+★★ 중요: 당신의 역할은 "현재 상태를 뒤엎는 것"이 아니라 "손 댈 곳만 손 대는" 것입니다.
+★★ 현재 체크된 대부분은 그대로 둡니다. 명백히 잘못된 것만 remove, 명백히 빠진 것만 add.
 
-[★ catO 2차 코드 엄격 매핑 (이 안에서만 제안)]
+[출력 방식 - add / remove 구조]
+★ 각 축에 대해 3가지만 판단:
+  - add: 현재 없는데 상품 성격상 추가해야 하는 코드
+  - remove: 현재 있는데 상품 성격에 명백히 안 맞는 코드
+  - 애매하거나 유지할 것은 언급하지 말 것 (기본이 "현재 유지")
+
+[catO 2차 코드 (이 안에서만 제안)]
 01 게시판: 01-01 슬림디자인 · 01-02 안전강화유리 · 01-03 디자인 · 01-04 크리스탈
   · 01-05 아크릴 · 01-06 슬림자석 · 01-07 우드 · 01-08 알미늄 · 01-09 갈바
   · 01-10 게시판구성품 · 01-11 자석프레임 · 01-13 포켓/월프레임 · 01-14 메모보드
@@ -1197,61 +1214,60 @@ JSON 배열만. 다른 텍스트·마크다운 금지. o3가 빈 문자열("")�
 09 각종물품: 09-01 명패 · 09-06 매트 · 09-07 기타 · 09-08 쇼케이스 · 09-09 사무실용품 · 09-10 현판
 10 인쇄물/스티커: 10-02 주차스티커 · 10-03 경고장 · 10-04 자전거스티커 · 10-05 각종인쇄물 · 10-06 안전스티커
 
-[★ 상품명 키워드 → catO 매핑 (엄격)]
+[상품명 키워드 → catO 매핑]
 - "아크릴 게시판" → 01-05
 - "슬림자석게시판" → 01-06  · "슬림안전보건/산업안전보건" → 01-17
 - "개폐식 액자" / "액자 프레임" → 01-15 · "월프레임" / "포켓" → 01-13
 - "자석프레임" → 01-11 · "메모보드" → 01-14
 - "A형 입간판 주차" → 04-01-009 · "A형 CCTV/금연" → 04-01-011
 - "주차스티커" → 10-02
-- 상품명 핵심 명사를 반드시 반영. 기본값 "01-01" 절대 금지
 
-[★ catT 업종 (10개)]
+[catT 업종 (9개)]
 01 학교/학원 · 02 식당/카페 · 03 아파트 · 04 호텔/펜션 · 05 병원/요양/약국
-· 06 회사/공장 · 07 공공기관 · 08 헬스/레저 · 09 기타업종 · 12 개인결제
+· 06 회사/공장 · 07 공공기관 · 08 헬스/레저 · 09 기타업종
 
-[catT 판단 원칙]
-- 범용(게시판/안내판/액자) → 9개 전체 연결 (12 제외)
-- 특수(산업안전/의료용/학교용) → 관련 업종만 2~4개
-- 주차 관련 → 03(아파트) + 06(회사) + 07(공공) 중심
+[catT 원칙]
+- 현재 연결된 업종은 대부분 유지 (명백히 안 맞는 것만 remove)
+- 주요 업종 중 빠진 것만 add (필수 업종이 빠졌을 때)
 
-[★ SelMemCat (30개) — 관심분야 공간그룹]
-사용자 매트릭스에서 제공됨. 오직 제공된 키만 사용.
+[SelMemCat / SelOptCat2 — ★ 핵심 원칙 ★]
+현재 체크된 대부분은 유지. 다음만 고려:
+- REMOVE: 상품명과 명백히 상충하는 체크
+  · 약국용 상품인데 헬스장/골프연습장 → remove 대상
+  · 주정차 금지 상품인데 학교 급식실 → remove 대상
+  · "무단채취 금지 현수막"(공원용)인데 병원 내부 공간 → remove 대상
+  · 즉 "이 상품이 왜 저기 있어?" 라는 수준일 때만 remove
+- ADD: 상품 성격상 무조건 있어야 하는데 빠진 경우만
+  · 약국 상품인데 04-01(병원/의료기관/약국) 빠져있음 → add
+  · 학교 상품인데 02-01(학교) 빠져있음 → add
+  · 애매한 추천 금지. 꼭 필요한 것만 add
+- 기본: 애매하면 "건드리지 않음" (add/remove에 넣지 않음)
+- 체크 개수 늘리거나 줄이는 목표 없음. 현재 55개든 5개든 상품에 맞으면 그대로
 
-[SelMemCat 판단 원칙 (매우 중요)]
-- 범용 상품: 반드시 5~20개 체크 (공간그룹 02~08 중 관련 있는 것 각 1~4)
-- 특수 상품: 2~5개
-- 절대 0개로 두지 말 것 = 검색 필터 미노출
-- 현재 체크 중 상품 성격에 맞지 않는 그룹은 remove
+[절대 금지]
+- "전체 해제 후 새로 체크" 사고방식 금지
+- 갯수 제약에 따른 추천 금지 ("6개만 고르자" 같은 발상 금지)
+- 현재 체크 중 90% 이상 remove는 절대 금지 (명백한 과태깅 아니면)
 
-[★ SelOptCat2 (9업종 × 44~47개 공간)]
-사용자 매트릭스에서 제공됨. 오직 제공된 키만 사용.
-
-[SelOptCat2 판단 원칙]
-- 업종당 3~12개 적정
-- 상품이 실제 놓일 공간만 선택 (공용통로/로비/사무실/카운터/엘리베이터/주차장 등 공용 공간 중심)
-- 현재 체크 중 상품 성격에 맞지 않는 것(예: 약국에 헬스장·독서실)은 반드시 remove
-- 업종당 30+ 체크는 과태깅 → 핵심만 남기고 remove
-
-[출력 JSON 배열 only. 마크다운/텍스트 금지]
+[출력 JSON 배열 only. 마크다운·텍스트 금지]
 [
   {
-    "rgr":"240507130012_6182",
-    "catO":{"o1":"01","o2":"01-05","o3":""},
-    "catT_keep":["01","03","04","05","06","07","08","09"],
-    "catT_remove":["02"],
-    "selMemCat_keep":["02-01","03-01","04-01","06-01","06-02","08-01"],
+    "rgr":"231114162518_9418",
+    "catO":{"o1":"05","o2":"05-06","o3":""},
+    "catT_add":[],
+    "catT_remove":[],
+    "selMemCat_add":["07-02"],
     "selMemCat_remove":[],
-    "selOptCat2_keep":{"01":["05-03","05-05","05-13"],"03":["05-01","05-09"]},
-    "selOptCat2_remove":{"01":["05-20","05-21"]},
-    "reason":"아크릴 게시판: 범용, 식당 제외. 업종별 공용공간만 유지."
+    "selOptCat2_add":{"03":["05-05"]},
+    "selOptCat2_remove":{"01":["05-14"]},
+    "reason":"공원 내 무단채취 현수막: 현재 4업종·55체크 상태 적절. 조경업(07-02) 추가 권장. 학교 급식실(01 업종 05-14)만 부적합 제거."
   }
 ]
 
 [출력 엄수]
-- catT_keep 는 반드시 2자리 문자열 배열 ("01","02"...)
-- selOptCat2_keep 의 키는 반드시 2자리 "01"~"09" (접두사 "업종" 금지)
-- selOptCat2_remove 에 현재 체크된 부적합 코드 포함. 없으면 빈 객체
+- 배열 키 이름: catT_add, catT_remove, selMemCat_add, selMemCat_remove, selOptCat2_add, selOptCat2_remove
+- selOptCat2_* 의 키는 반드시 2자리 "01"~"09"
+- add/remove가 없으면 빈 배열 [] 또는 빈 객체 {}
 - o3 가 불명이면 빈 문자열
 `;
 
@@ -1405,18 +1421,21 @@ ${lines.join('\n')}`;
           const it = RESULT.items.find(x => x.rgr === a.rgr);
           if (!it) continue;
           if (matrix) {
-            // v10: 4축 전체 저장 + 기존 필드 호환 매핑
+            // v10.7: add/remove 구조 (기존 keep은 "아무 것도 안 함" 의미 → 저장 안 함)
             it.llm_catO = a.catO || {};
-            it.llm_catT_keep = a.catT_keep || [];
+            it.llm_catT_add = a.catT_add || [];
             it.llm_catT_remove = a.catT_remove || [];
-            it.llm_selMemCat_keep = a.selMemCat_keep || [];
+            it.llm_selMemCat_add = a.selMemCat_add || [];
             it.llm_selMemCat_remove = a.selMemCat_remove || [];
-            it.llm_selOptCat2_keep = normalizeT2Keys(a.selOptCat2_keep);
+            it.llm_selOptCat2_add = normalizeT2Keys(a.selOptCat2_add);
             it.llm_selOptCat2_remove = normalizeT2Keys(a.selOptCat2_remove);
             it.llm_reason = a.reason || '';
-            // 하위 호환: 기존 자동수정 로직이 쓰는 필드
+            // 하위 호환 (기존 llm_catT_keep/llm_selMemCat_keep 참조 코드용)
+            it.llm_catT_keep = null;  // v10.7: keep은 "그대로 유지" 개념이라 명시 안 함
+            it.llm_selMemCat_keep = null;
+            it.llm_selOptCat2_keep = null;
             it.llm_o3 = (a.catO && a.catO.o3) || (a.catO && a.catO.o2) || null;
-            it.llm_spaces = it.llm_selMemCat_keep;
+            it.llm_spaces = null;  // v10.7: spaces는 add로 대체
           } else {
             it.llm_o3 = (a.o3 && a.o3.length > 0) ? a.o3 : null;
             it.llm_spaces = a.spaces || [];
@@ -1518,55 +1537,41 @@ ${lines.join('\n')}`;
           const hasCode = s.o.includes(it.llm_o3);
           checks.push({name:'O3('+it.llm_o3+')', ok: hasCode, detail: hasCode ? '등록' : '누락'});
         }
-        // v10.2: SelOptCat2 remove 검증 (LLM이 지정한 업종×공간이 실제로 해제됐는지)
+        // v10.7 재검증: add/remove 완료 여부만 체크
+        const CBR_T2_V = /^(\d{2})`2`(\d{2}-\d{2})`/;
+        const CBR_T5_V = /^(\d{2})`5`(\d{2}-\d{2})`/;
+        const curT2 = new Set(), curT5 = new Set();
+        (s.checked_values||[]).forEach(v => {
+          const m2 = v.match(CBR_T2_V); if (m2) curT2.add(m2[1]+'|'+m2[2]);
+          const m5 = v.match(CBR_T5_V); if (m5) curT5.add(m5[2]);  // t5는 sub만 비교
+        });
+        // SelMemCat add 검증
+        if (it.llm_selMemCat_add && it.llm_selMemCat_add.length) {
+          const added = it.llm_selMemCat_add.filter(sp => curT5.has(sp)).length;
+          checks.push({name:'Mem추가', ok: added===it.llm_selMemCat_add.length, detail: added+'/'+it.llm_selMemCat_add.length});
+        }
+        // SelMemCat remove 검증
+        if (it.llm_selMemCat_remove && it.llm_selMemCat_remove.length) {
+          const remained = it.llm_selMemCat_remove.filter(sp => curT5.has(sp)).length;
+          checks.push({name:'Mem해제', ok: remained===0, detail: '잔존 '+remained+'/'+it.llm_selMemCat_remove.length});
+        }
+        // SelOptCat2 add 검증
+        if (it.llm_selOptCat2_add && Object.keys(it.llm_selOptCat2_add).length) {
+          let matched=0, total=0;
+          for (const pfx in it.llm_selOptCat2_add) for (const sub of (it.llm_selOptCat2_add[pfx]||[])) {
+            total++;
+            if (curT2.has(pfx+'|'+sub)) matched++;
+          }
+          checks.push({name:'T2추가', ok: matched===total, detail: matched+'/'+total});
+        }
+        // SelOptCat2 remove 검증
         if (it.llm_selOptCat2_remove && Object.keys(it.llm_selOptCat2_remove).length) {
-          const CBR_T2_V = /^(\d{2})`2`(\d{2}-\d{2})`/;
-          const stillChecked = new Set();
-          (s.checked_values||[]).forEach(v => {
-            const m = v.match(CBR_T2_V);
-            if (m) stillChecked.add(m[1]+'|'+m[2]);
-          });
-          let leftover = 0, total = 0;
-          for (const pfx in it.llm_selOptCat2_remove) {
-            for (const sub of (it.llm_selOptCat2_remove[pfx]||[])) {
-              total++;
-              if (stillChecked.has(pfx+'|'+sub)) leftover++;
-            }
+          let leftover=0, total=0;
+          for (const pfx in it.llm_selOptCat2_remove) for (const sub of (it.llm_selOptCat2_remove[pfx]||[])) {
+            total++;
+            if (curT2.has(pfx+'|'+sub)) leftover++;
           }
-          checks.push({name:'T2해제', ok: leftover===0 && total>0, detail: '잔존 '+leftover+'/'+total});
-        }
-        // v10.2: SelOptCat2 keep 검증 (지정 체크가 실제로 들어갔는지)
-        if (it.llm_selOptCat2_keep && Object.keys(it.llm_selOptCat2_keep).length) {
-          const CBR_T2_V2 = /^(\d{2})`2`(\d{2}-\d{2})`/;
-          const currChecked = new Set();
-          (s.checked_values||[]).forEach(v => {
-            const m = v.match(CBR_T2_V2);
-            if (m) currChecked.add(m[1]+'|'+m[2]);
-          });
-          let matched = 0, totalK = 0;
-          for (const pfx in it.llm_selOptCat2_keep) {
-            for (const sub of (it.llm_selOptCat2_keep[pfx]||[])) {
-              totalK++;
-              if (currChecked.has(pfx+'|'+sub)) matched++;
-            }
-          }
-          checks.push({name:'T2체크', ok: matched===totalK && totalK>0, detail: matched+'/'+totalK});
-        }
-        // CB재체크: type=5 전용 + 과태깅(>25) 잔존 감지
-        if (['FIX_CB','FIX_ALL','FIX_MULTI'].includes(it.judge)) {
-          const memCnt = (typeof s.t5_cc === 'number') ? s.t5_cc : 0;
-          const overTag = memCnt > 25;
-          let memOk = true, detail = 't5='+memCnt;
-          if (it.llm_spaces && it.llm_spaces.length) {
-            const currSpaces = new Set(s.t5_list || []);
-            const matched = it.llm_spaces.filter(sp => currSpaces.has(sp)).length;
-            memOk = (matched === it.llm_spaces.length) && !overTag && memCnt > 0;
-            detail = '매치 '+matched+'/'+it.llm_spaces.length+' · t5='+memCnt + (overTag?' (과태깅!)':'');
-          } else {
-            memOk = memCnt > 0 && !overTag;
-            detail = 't5='+memCnt + (overTag?' (과태깅)':memCnt===0?' (미연결)':'');
-          }
-          checks.push({name:'CB재체크', ok: memOk, detail});
+          checks.push({name:'T2해제', ok: leftover===0, detail: '잔존 '+leftover+'/'+total});
         }
         const okN = checks.filter(c=>c.ok).length;
         const status = okN === checks.length ? 'full' : (okN > 0 ? 'partial' : 'none');
@@ -1937,23 +1942,30 @@ async function fixOne(item) {
   }
   if (!rowid) return 'rowid 없음';
 
-  // ============ 1. 업종 연결 (v10.5: judge 무관 · LLM catT_keep 우선) ============
-  // llm_catT_keep 있으면 그 배열 기준. 없으면 기존 FIX_T 로직(9개 일괄)
-  const expectedT = (item.llm_catT_keep && item.llm_catT_keep.length)
-    ? item.llm_catT_keep
-    : (isT ? ['01','02','03','04','05','06','07','08','09'] : null);
-  if (expectedT) {
-    const missing = expectedT.filter(c => !connectedT.has(c));
+  // ============ v10.7 업종 연결 (add 기반) ============
+  // LLM이 llm_catT_add에 지정한 업종만 추가. 없으면 (FIX_T 판정일 때만) 기존 9개 일괄.
+  const catTAdd = item.llm_catT_add || [];
+  if (catTAdd.length) {
+    // v10.7: LLM 명시 add만 추가 (기존 연결 그대로 유지)
+    const missing = catTAdd.filter(c => !connectedT.has(c));
     if (missing.length) {
       const results_t = await Promise.all(
         missing.map(code => hsApiCateAdd(rowid, item.rgr, code, '2', connectedT.size))
       );
       const ok_n = results_t.filter(r => r.ok).length;
       results.push(`T+${ok_n}/${missing.length}`);
-      // 추가된 업종을 connectedT에 반영 (이후 로직에서 참조)
       missing.forEach(c => connectedT.add(c));
-    } else if (isT || item.llm_catT_keep) {
-      results.push('T이미완료');
+    }
+  } else if (isT) {
+    // LLM 판정 없이 FIX_T 단독 판정일 때만 기존 9개 일괄 로직 유지
+    const missing = ['01','02','03','04','05','06','07','08','09'].filter(c => !connectedT.has(c));
+    if (missing.length) {
+      const results_t = await Promise.all(
+        missing.map(code => hsApiCateAdd(rowid, item.rgr, code, '2', connectedT.size))
+      );
+      const ok_n = results_t.filter(r => r.ok).length;
+      results.push(`T+${ok_n}/${missing.length}(기본)`);
+      missing.forEach(c => connectedT.add(c));
     }
   }
 
@@ -1985,115 +1997,104 @@ async function fixOne(item) {
     }
   }
 
-  // ============ 3. FIX_CB: 체크박스 해제 + 재체크 (type=5 관심분야) — v10.5 개선 ============
-  // v10.5: 해제할 type=5가 없어도 LLM 추천 있으면 재체크 실행
-  if (isCB || (item.llm_spaces && item.llm_spaces.length)) {
+  // ============ v10.7 SelMemCat add/remove (type=5 관심분야) ============
+  // ★ 원칙: 기존 체크는 건드리지 않음. LLM이 명시한 add만 체크, remove만 해제.
+  const memAdd = item.llm_selMemCat_add || [];
+  const memRemove = item.llm_selMemCat_remove || [];
+  if (memAdd.length || memRemove.length) {
     const CBR_F = /^(\d{2})`5`(\d{2}-\d{2})`/;
-    const targetsToUncheck = existingCheckedValues.filter(v => CBR_F.test(v));
-    let offOk = 0, onOk = 0;
-    // 3-1. 해제할 type=5 있으면 해제 (병렬)
-    if (targetsToUncheck.length) {
-      for (let i=0; i<targetsToUncheck.length; i+=10) {
-        const batch = targetsToUncheck.slice(i, i+10);
-        const results_cb = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, false)));
-        offOk += results_cb.filter(r => r.ok).length;
+    const CBR_F2 = /^(\d{2})`5`(\d{2}-\d{2})`(.*)$/;
+    // 페이지 fetch (업종 추가 반영 대기)
+    await new Promise(r=>setTimeout(r, 500));
+    const html2 = await (await fetch(`/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`,{credentials:'include'})).text();
+    const doc2 = new DOMParser().parseFromString(html2,'text/html');
+    const allT5 = [];
+    const checkedT5 = new Set();
+    doc2.querySelectorAll('input[type="checkbox"]').forEach(x=>{
+      const v = x.value||'';
+      if (!CBR_F.test(v)) return;
+      allT5.push(v);
+      if (x.hasAttribute('checked')) checkedT5.add(v);
+    });
+    // add: 체크 안 된 상태의 sub 매칭 value
+    const toAddValues = [];
+    for (const target of memAdd) {
+      for (const v of allT5) {
+        const m = v.match(CBR_F2);
+        if (m && m[2] === target && !checkedT5.has(v)) toAddValues.push(v);
       }
     }
-    // 3-2. LLM 지정 공간 재체크 (v10.5: 해제 건수 무관하게 항상 시도)
-    if (item.llm_spaces && item.llm_spaces.length) {
-      await new Promise(r=>setTimeout(r, 500));  // 업종 추가 반영 대기 (v10.5: 300→500ms)
-      const CBR_F2 = /^(\d{2})`5`(\d{2}-\d{2})`(.*)$/;
-      const url2 = `/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`;
-      const res2 = await fetch(url2, {credentials:'include'});
-      const html2 = await res2.text();
-      const doc2 = new DOMParser().parseFromString(html2, 'text/html');
-      const allValues = [];
-      doc2.querySelectorAll('input[type="checkbox"]').forEach(x=>{
-        if (CBR_F.test(x.value||'')) allValues.push(x.value);
-      });
-      const toCheck = [];
-      for (const target of item.llm_spaces) {
-        const matches = allValues.filter(v => {
-          const m = v.match(CBR_F2);
-          return m && m[2] === target;
-        });
-        toCheck.push(...matches);
+    // remove: 현재 체크된 상태의 sub 매칭 value
+    const toRmValues = [];
+    for (const target of memRemove) {
+      for (const v of checkedT5) {
+        const m = v.match(CBR_F2);
+        if (m && m[2] === target) toRmValues.push(v);
       }
-      for (let i=0; i<toCheck.length; i+=10) {
-        const batch = toCheck.slice(i, i+10);
-        const results_on = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, true)));
-        onOk += results_on.filter(r => r.ok).length;
-      }
-      if (onOk === 0 && toCheck.length === 0) {
-        // LLM이 지정한 공간 코드가 페이지에 존재 안 함 — 업종 연결 실패 가능성
-        results.push('CB재체크타깃없음(업종미연결?)');
-      }
-      results.push(`CB-${offOk}+${onOk}`);
-    } else {
-      results.push('CB이미없음');
     }
+    let memOn = 0, memOff = 0;
+    for (let i=0; i<toAddValues.length; i+=10) {
+      const r = await Promise.all(toAddValues.slice(i,i+10).map(v => hsApiCbToggle(item.rgr, v, true)));
+      memOn += r.filter(x=>x.ok).length;
+    }
+    for (let i=0; i<toRmValues.length; i+=10) {
+      const r = await Promise.all(toRmValues.slice(i,i+10).map(v => hsApiCbToggle(item.rgr, v, false)));
+      memOff += r.filter(x=>x.ok).length;
+    }
+    if (memOn || memOff) results.push(`Mem+${memOn}-${memOff}`);
   }
 
-  // ============ v10.2: SelOptCat2 업종별 공간 add/remove ============
-  // LLM 응답의 llm_selOptCat2_keep / llm_selOptCat2_remove 반영
-  // 이 블록은 FIX_CB 처리 여부와 무관하게 LLM 지시가 있으면 실행
+  // ============ v10.7 SelOptCat2 add/remove (업종×공간) ============
+  // ★ 원칙: 기존 체크 유지. add/remove만 실행.
+  const t2AddMap = item.llm_selOptCat2_add || {};
   const t2RemoveMap = item.llm_selOptCat2_remove || {};
-  const t2KeepMap = item.llm_selOptCat2_keep || {};
-  const hasT2Work = Object.keys(t2RemoveMap).length || Object.keys(t2KeepMap).length;
-  if (hasT2Work) {
+  if (Object.keys(t2AddMap).length || Object.keys(t2RemoveMap).length) {
     await new Promise(r => setTimeout(r, 250));
-    const state2 = await hsFetchState(item.rgr);
-    if (state2) {
-      const CBR_T2_ANY = /^(\d{2})`2`(\d{2}-\d{2})`/;
-      // 현재 체크된 type=2 value 목록
-      const currCheckedT2 = (state2.checked_values||[]).filter(v => CBR_T2_ANY.test(v));
-      // 전체 type=2 체크박스 value (체크+미체크) - 페이지 다시 fetch
-      const html3 = await (await fetch(`/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`, {credentials:'include'})).text();
-      const doc3 = new DOMParser().parseFromString(html3, 'text/html');
-      const allT2 = [];
-      doc3.querySelectorAll('input[type="checkbox"]').forEach(x => {
-        if (CBR_T2_ANY.test(x.value||'')) allT2.push(x.value);
-      });
-      // 해제 대상 (현재 체크된 것 중 remove 대상)
-      const toUncheck = [];
-      for (const pfx in t2RemoveMap) {
-        for (const sub of (t2RemoveMap[pfx]||[])) {
-          const match = currCheckedT2.find(v => {
-            const m = v.match(CBR_T2_ANY);
-            return m && m[1] === pfx && m[2] === sub;
-          });
-          if (match) toUncheck.push(match);
-        }
+    const CBR_T2_ANY = /^(\d{2})`2`(\d{2}-\d{2})`/;
+    const html3 = await (await fetch(`/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`,{credentials:'include'})).text();
+    const doc3 = new DOMParser().parseFromString(html3, 'text/html');
+    const allT2 = [];
+    const checkedT2 = new Set();
+    doc3.querySelectorAll('input[type="checkbox"]').forEach(x => {
+      const v = x.value||'';
+      if (!CBR_T2_ANY.test(v)) return;
+      allT2.push(v);
+      if (x.hasAttribute('checked')) checkedT2.add(v);
+    });
+    // add: pfx+sub 매칭 + 미체크 value
+    const toCheckT2 = [];
+    for (const pfx in t2AddMap) {
+      for (const sub of (t2AddMap[pfx]||[])) {
+        const m = allT2.find(v => {
+          const mm = v.match(CBR_T2_ANY);
+          return mm && mm[1]===pfx && mm[2]===sub && !checkedT2.has(v);
+        });
+        if (m) toCheckT2.push(m);
       }
-      // 체크 대상 (미체크 상태 + keep 대상 + 페이지에 존재)
-      const currSet = new Set(currCheckedT2);
-      const toCheckT2 = [];
-      for (const pfx in t2KeepMap) {
-        for (const sub of (t2KeepMap[pfx]||[])) {
-          const match = allT2.find(v => {
-            const m = v.match(CBR_T2_ANY);
-            return m && m[1] === pfx && m[2] === sub;
-          });
-          if (match && !currSet.has(match)) toCheckT2.push(match);
-        }
-      }
-      let t2Off = 0, t2On = 0;
-      for (let i=0; i<toUncheck.length; i+=10) {
-        const batch = toUncheck.slice(i, i+10);
-        const r = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, false)));
-        t2Off += r.filter(x => x.ok).length;
-      }
-      for (let i=0; i<toCheckT2.length; i+=10) {
-        const batch = toCheckT2.slice(i, i+10);
-        const r = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, true)));
-        t2On += r.filter(x => x.ok).length;
-      }
-      if (t2Off || t2On) results.push(`T2-${t2Off}+${t2On}`);
     }
+    // remove: pfx+sub 매칭 + 체크됨 value
+    const toUncheckT2 = [];
+    for (const pfx in t2RemoveMap) {
+      for (const sub of (t2RemoveMap[pfx]||[])) {
+        for (const v of checkedT2) {
+          const mm = v.match(CBR_T2_ANY);
+          if (mm && mm[1]===pfx && mm[2]===sub) toUncheckT2.push(v);
+        }
+      }
+    }
+    let t2On=0, t2Off=0;
+    for (let i=0; i<toCheckT2.length; i+=10) {
+      const r = await Promise.all(toCheckT2.slice(i,i+10).map(v => hsApiCbToggle(item.rgr, v, true)));
+      t2On += r.filter(x=>x.ok).length;
+    }
+    for (let i=0; i<toUncheckT2.length; i+=10) {
+      const r = await Promise.all(toUncheckT2.slice(i,i+10).map(v => hsApiCbToggle(item.rgr, v, false)));
+      t2Off += r.filter(x=>x.ok).length;
+    }
+    if (t2On || t2Off) results.push(`T2+${t2On}-${t2Off}`);
   }
 
-  // ============ v10.2: catT 업종 remove (LLM 지시) ============
-  // LLM이 llm_catT_remove 에 지정한 업종은 hsApiCateDel 로 제거
+  // ============ v10.7 catT remove (LLM 지시만) ============
   const catTRemove = item.llm_catT_remove || [];
   if (catTRemove.length) {
     let tDel = 0;
