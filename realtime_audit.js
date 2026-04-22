@@ -1422,8 +1422,10 @@ ${lines.join('\n')}`;
         addLog(`[LLM ERR] 배치 ${Math.floor(i/V10_BATCH)+1}: ${e.message}`, 'err');
         fail += batch.length;
       }
-      // v10.3: 배치 간격 증가 (300ms → 2000ms) — Anthropic tier 1 분당 50 RPM 여유 확보
-      await new Promise(r => setTimeout(r, 2000));
+      // v10.4: Anthropic Tier 1 출력토큰 10K/분 제약 고려 → 배치 간격 12초
+      // (배치당 출력 약 3200토큰 × 분당 3배치 = 약 9600토큰). HS_AUDIT_CONFIG.llm_gap으로 조절 가능.
+      const gap = (CFG && CFG.llm_gap) || 12000;
+      await new Promise(r => setTimeout(r, gap));
     }
 
     $('ha-llm-run').disabled = false;
