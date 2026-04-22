@@ -177,7 +177,7 @@ root.innerHTML = `
 </style>
 
 <div class="ha-header" id="ha-drag">
-  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7">v10.7.2</span></div>
+  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7">v10.7.3</span></div>
   <div class="ha-ctrl">
     <button class="ha-btn" id="ha-min">─</button>
     <button class="ha-btn" id="ha-stop">■</button>
@@ -1718,7 +1718,10 @@ ${lines.join('\n')}`;
   };
 
   // ============ 자동 수정 섹션 ============
-  const fixItems = sorted.filter(r => r.judge && r.judge.startsWith('FIX'));
+  // v10.7.3 ★ 치명 버그 수정: sorted는 toDisplayRow로 변환된 객체라 llm_* 필드가 없음
+  // 원본 RESULT.items에서 직접 필터링 + sorted 순서 유지
+  const sortedRgrs = sorted.filter(r => r.judge && r.judge.startsWith('FIX')).map(r => r.rgr);
+  const fixItems = sortedRgrs.map(rgr => RESULT.items.find(it => it.rgr === rgr)).filter(Boolean);
   if (fixItems.length > 0) {
     const byJ = {};
     for (const r of fixItems) byJ[r.judge] = (byJ[r.judge]||0) + 1;
