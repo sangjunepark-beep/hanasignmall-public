@@ -1057,8 +1057,11 @@ async function main(){
       oDetail,
       tCount,
       tLabels: tLabels || '(미연결)',
+      tCodes,  // v11.0.3: buildProposal 참조용 (원본 r.t 잃지 않게)
+      oCodes,  // v11.0.3: 동일 이유
       cc: r.cc || 0,
       ct: r.ct || 0,
+      t5_cc: r.t5_cc || 0,  // v11.0.3: 과태깅 판정용
       over: ((r.t5_cc || 0) > 25) ? 'O' : '',  // v10.7.4: t5 기준
       judge: r.judge,
       fix: j.f,
@@ -1097,8 +1100,9 @@ async function main(){
   }
 
   // 판정 → 제안(제안 변경값) 계산 · LLM 결과 우선
+  // v11.0.3: r은 toDisplayRow 변환본이라 r.t가 없음. tCodes는 toDisplayRow에서 저장한 것 사용.
   function buildProposal(r) {
-    const tCodes = (r.t||'').split(',').filter(x=>x);
+    const tCodes = r.tCodes || [];
     const tCurrent = tCodes.length ? tCodes.map(c=>T1_MAP[c]||c).join(', ') : '(미연결)';
     let oProp = '-', tProp = '-', cbProp = '-';
     const j = r.judge || 'OK';
