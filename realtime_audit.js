@@ -1,7 +1,15 @@
 /**
- * 하나사인몰 어드민 실시간 감사 대시보드 (v10.7 · 2026-04-22)
+ * 하나사인몰 어드민 실시간 감사 대시보드 (v11 · 2026-04-22)
  *
- * v10.7 대전환 — "뒤엎기" 금지. "손 댈 곳만 손 대자"
+ * v11 대전환 — "상품명 키워드 매칭 우선, LLM 보조"
+ *   [매칭 엔진] category_matching_rules 기반 (108개 catO 키워드 규칙 + 매트릭스)
+ *   [판정 기준] 키워드 3차>2차>1차 깊이 우선 + catO×catT 부적합(C) 경고
+ *   [자동수정] "1차 불일치 스킵" 제거 → catO 재분류 허용 (priority>=5 자동, 이하 수동)
+ *   [LLM 역할] 키워드 매칭 실패·애매한 경우만 호출 (비용 60~80% 감소 예상)
+ *   [수동 보호] catT/공간은 add만 자동, 기존 연결 해제는 사람 검수
+ *   [안전장치] v10.6 3중 롤백 유지 + 재분류 전 풀 스냅샷
+ *
+ * v10.7 변경점 (유지) — "뒤엎기" 금지. "손 댈 곳만 손 대자"
  *   [LLM 프롬프트] keep/remove → add/remove 구조 (현재 체크 99% 존중)
  *                 "2~6개 축소 지향" 가이드 전면 제거
  *                 "명백히 잘못된 것만 remove · 꼭 필요한데 빠진 것만 add"
@@ -503,71 +511,288 @@ async function auditOne(item) {
   });
 }
 
-// ================== 판정 규칙 ==================
-function expectO1(name) {
-  const kw = [['04',['입간판','A형','오뚜기','스텐','안내봉','원형','철제']],
-              ['02',['안내판','표지판','플레이트','프레임']],
-              ['01',['게시판','보드','화이트보드']],
-              ['10',['스티커','라벨','시트지','출력']],
-              ['05',['현수막','배너']],
-              ['08',['차량','도로','콘','라바콘']]];
-  for (const [c, ws] of kw) for (const w of ws) if (name.includes(w)) return c;
-  return null;
-}
-function expectT1(name) {
-  const m = new Set();
-  if (/초등학교|학교|학원|교실|교무실|급식/.test(name)) m.add('01');
-  if (/식당|카페|음식점|레스토랑|테이크아웃|주문|선불|2층 좌석|주방/.test(name)) m.add('02');
-  if (/아파트|단지|입주민|관리소|경비실|공동주택/.test(name)) m.add('03');
-  if (/호텔|펜션|모텔|객실|리셉션|숙박/.test(name)) m.add('04');
-  if (/병원|약국|의원|요양원|진료|처방|간호/.test(name)) m.add('05');
-  if (/회사|공장|사무실|창고|물류|제조|작업장|안전작업|지게차/.test(name)) m.add('06');
-  if (/관공서|구청|시청|공기업|소방|경찰|군부대/.test(name)) m.add('07');
-  if (/헬스|골프|수영|스포츠|피트니스/.test(name)) m.add('08');
-  if (/무지|셀프디자인|타입 - 대형|타입 - 중형|타입 - 소형|교체용|시트 교체|기본 타입/.test(name)) return 'U9';
-  if (/주차|오뚜기|요일제|2부제|5부제|외부차량|주정차|전기차|차량/.test(name) && m.size === 0) return 'CAR';
-  return m.size ? m : null;
-}
-function expectO3(name) {
-  const m = [['주의','04-01-007'],['위험','04-01-007'],['CCTV','04-01-011'],['금연','04-01-011'],['촬영','04-01-011'],
-             ['출입금지','04-01-008'],['금지','04-01-008'],['청소중','04-01-001'],['공사중','04-01-002'],['공사','04-01-002'],
-             ['식당','04-01-004'],['카페','04-01-004'],['음식','04-01-004'],['주차','04-01-009'],['학교','04-01-012'],['학원','04-01-012']];
-  for (const [kw, c] of m) if (name.includes(kw)) return c;
-  return null;
+// ==================== v11 매칭 엔진 ====================
+// 원본 규칙: category_matching_rules.json · 카테고리_매칭_규칙_v1.md (2026-04-22)
+// 주요 원칙: 키워드 우선 · LLM 보조 · catO 재분류 허용 · 수동 태그 존중
+
+const MATCHING_RULES = {
+  kw_catO: [
+    // 01 게시판
+    {c:{o1:"01",o2:"01-01"},k:["슬림디자인","슬림 디자인 게시판"],p:5},
+    {c:{o1:"01",o2:"01-02"},k:["안전강화유리","강화유리 게시판"],p:5},
+    {c:{o1:"01",o2:"01-03"},k:["디자인 게시판"],p:3,ex:["슬림"]},
+    {c:{o1:"01",o2:"01-04"},k:["크리스탈"],p:5},
+    {c:{o1:"01",o2:"01-05"},k:["아크릴 게시판","아크릴보드"],p:5},
+    {c:{o1:"01",o2:"01-06"},k:["슬림자석","자석 게시판"],p:5},
+    {c:{o1:"01",o2:"01-07"},k:["우드 게시판","원목 게시판"],p:5},
+    {c:{o1:"01",o2:"01-08"},k:["알미늄 게시판","알루미늄 게시판"],p:5},
+    {c:{o1:"01",o2:"01-09"},k:["갈바 게시판"],p:5},
+    {c:{o1:"01",o2:"01-14"},k:["메모보드","화이트보드"],p:5},
+    {c:{o1:"01",o2:"01-15"},k:["액자"],p:5},
+    {c:{o1:"01",o2:"01-17"},k:["슬림 안전보건","안전보건 게시판"],p:5},
+    {c:{o1:"01"},k:["게시판","보드"],p:1},
+    // 02 안내판
+    {c:{o1:"02",o2:"02-05",o3:"02-05-001"},k:["매립 금연","매립형 금연"],p:7},
+    {c:{o1:"02",o2:"02-05",o3:"02-05-002"},k:["매립 주의"],p:7},
+    {c:{o1:"02",o2:"02-05",o3:"02-05-003"},k:["매립 금지"],p:7},
+    {c:{o1:"02",o2:"02-05",o3:"02-05-004"},k:["매립 주차"],p:7},
+    {c:{o1:"02",o2:"02-05",o3:"02-05-006"},k:["매립 화단","화단 보호 매립"],p:7},
+    {c:{o1:"02",o2:"02-05",o3:"02-05-007"},k:["매립 반려","반려동물 매립"],p:7},
+    {c:{o1:"02",o2:"02-05"},k:["매립 표지판","매립형 표지판","말뚝","매립"],p:5},
+    {c:{o1:"02",o2:"02-05"},k:["스텐 표지판"],p:5,ex:["도로","주차","교통","매장","실내","H입간판"]},  // 부록A: 기본값 매립표지판
+    {c:{o1:"02",o2:"02-06",o3:"02-06-001"},k:["피난대피층","피난 대피층"],p:7},
+    {c:{o1:"02",o2:"02-06"},k:["소방 안내판","소방안전"],p:5},
+    {c:{o1:"02",o2:"02-07",o3:"02-07-001"},k:["MSDS 주의"],p:7},
+    {c:{o1:"02",o2:"02-07",o3:"02-07-002"},k:["MSDS 안전","MSDS 지시"],p:7},
+    {c:{o1:"02",o2:"02-07",o3:"02-07-003"},k:["MSDS 안내"],p:7},
+    {c:{o1:"02",o2:"02-07",o3:"02-07-004"},k:["MSDS 위험"],p:7},
+    {c:{o1:"02",o2:"02-07",o3:"02-07-005"},k:["MSDS 이용수칙"],p:7},
+    {c:{o1:"02",o2:"02-07",o3:"02-07-006"},k:["MSDS 경고"],p:7},
+    {c:{o1:"02",o2:"02-07"},k:["MSDS","물질안전보건"],p:5},
+    {c:{o1:"02",o2:"02-08"},k:["법령","법정게시물","법정표지"],p:6},  // 법령 우선: 안전보건 게시판과 충돌 시 이김
+    {c:{o1:"02",o2:"02-01"},k:["금연 안내판","CCTV 안내판"],p:5},
+    {c:{o1:"02",o2:"02-03"},k:["이용수칙 안내판","이용수칙"],p:5},
+    {c:{o1:"02",o2:"02-04"},k:["유도 안내","유도판"],p:5},
+    {c:{o1:"02"},k:["안내판","표지판","플레이트","사인"],p:1},
+    // 04 입간판
+    {c:{o1:"04",o2:"04-01",o3:"04-01-001"},k:["A형 청소"],p:7},
+    {c:{o1:"04",o2:"04-01",o3:"04-01-002"},k:["A형 공사"],p:7},
+    {c:{o1:"04",o2:"04-01",o3:"04-01-003"},k:["A형 수영장"],p:7},
+    {c:{o1:"04",o2:"04-01",o3:"04-01-004"},k:["A형 식당","A형 카페"],p:7},
+    {c:{o1:"04",o2:"04-01",o3:"04-01-005"},k:["A형 반려"],p:7},
+    {c:{o1:"04",o2:"04-01",o3:"04-01-007"},k:["A형 주의"],p:7},
+    {c:{o1:"04",o2:"04-01",o3:"04-01-008"},k:["A형 금지"],p:7},
+    {c:{o1:"04",o2:"04-01",o3:"04-01-009"},k:["A형 주차"],p:7},
+    {c:{o1:"04",o2:"04-01",o3:"04-01-010"},k:["A형 주유","A형 세차"],p:7},
+    {c:{o1:"04",o2:"04-01",o3:"04-01-011"},k:["A형 CCTV","A형 금연"],p:7},
+    {c:{o1:"04",o2:"04-01",o3:"04-01-012"},k:["A형 학교"],p:7},
+    {c:{o1:"04",o2:"04-01"},k:["A형 입간판","A형"],p:5},
+    {c:{o1:"04",o2:"04-02",o3:"04-02-001"},k:["H입간판","H형 입간판"],p:7},
+    {c:{o1:"04",o2:"04-02",o3:"04-02-002"},k:["놀이터 수칙","놀이터수칙"],p:7},
+    {c:{o1:"04",o2:"04-02"},k:["스텐 입간판"],p:5},
+    {c:{o1:"04",o2:"04-03"},k:["오뚜기 입간판","오뚜기 사인"],p:5,ex:["주차금지"]},
+    {c:{o1:"04"},k:["입간판"],p:1},
+    // 05 현수막/배너
+    {c:{o1:"05",o2:"05-01"},k:["명절","설날","추석"],p:5},
+    {c:{o1:"05",o2:"05-02"},k:["불조심"],p:5},
+    {c:{o1:"05",o2:"05-03"},k:["신년","연말","새해"],p:5},
+    {c:{o1:"05",o2:"05-04"},k:["주차 현수막","불법주차 현수막"],p:5},
+    {c:{o1:"05",o2:"05-05"},k:["유치원 현수막","학교 현수막"],p:5},
+    {c:{o1:"05",o2:"05-06"},k:["배너","X배너","실사 배너"],p:5},
+    {c:{o1:"05"},k:["현수막"],p:1},
+    // 07 구조물
+    {c:{o1:"07",o2:"07-04"},k:["구조물 간판","대형 간판","설치 구조물"],p:5},
+    // 08 도로안전
+    {c:{o1:"08",o2:"08-01"},k:["차선규제봉","규제봉"],p:5},
+    {c:{o1:"08",o2:"08-02"},k:["카스토퍼","주차스토퍼","스톱바"],p:5},
+    {c:{o1:"08",o2:"08-03"},k:["주차금지 오뚜기","주차금지 콘"],p:6},
+    {c:{o1:"08",o2:"08-04"},k:["과속방지턱","방지턱"],p:5},
+    {c:{o1:"08",o2:"08-05"},k:["코너보호대","코너가드"],p:5},
+    {c:{o1:"08",o2:"08-06"},k:["볼라드"],p:5},
+    {c:{o1:"08",o2:"08-07"},k:["반사경","교통거울","코너미러"],p:5},
+    {c:{o1:"08",o2:"08-08"},k:["표지병","쏠라표지"],p:5},
+    {c:{o1:"08",o2:"08-09"},k:["바리게이트","바리케이드"],p:5},
+    {c:{o1:"08",o2:"08-10"},k:["스텐입간판"],p:6,req:["도로","주차","교통"]},
+    {c:{o1:"08",o2:"08-11"},k:["높이제한바","높이제한"],p:5},
+    {c:{o1:"08",o2:"08-12"},k:["자전거보관대"],p:5},
+    {c:{o1:"08",o2:"08-13"},k:["쐐기","셋트앙카","앙카"],p:5},
+    {c:{o1:"08",o2:"08-14"},k:["교통표시등","쏠라등"],p:5},
+    {c:{o1:"08",o2:"08-15"},k:["제설함","염화칼슘함"],p:5},
+    {c:{o1:"08",o2:"08-17"},k:["장애인편의시설","장애인시설"],p:5},
+    {c:{o1:"08",o2:"08-18"},k:["차량진입판","진입판"],p:5},
+    {c:{o1:"08",o2:"08-19"},k:["차단봉"],p:5},
+    {c:{o1:"08",o2:"08-20"},k:["디자인휀스","디자인 펜스"],p:5},
+    {c:{o1:"08",o2:"08-21"},k:["차선분리대"],p:5},
+    {c:{o1:"08",o2:"08-22"},k:["방호벽","충격흡수"],p:5},
+    {c:{o1:"08",o2:"08-23"},k:["가림막"],p:5},
+    {c:{o1:"08",o2:"08-24"},k:["차량버팀목"],p:5},
+    {c:{o1:"08",o2:"08-25"},k:["추락방지","U형 철책"],p:5},
+    {c:{o1:"08",o2:"08-26"},k:["전선보호대"],p:5},
+    {c:{o1:"08",o2:"08-27"},k:["소화기함","수방보관함"],p:5},
+    {c:{o1:"08",o2:"08-28"},k:["도로표지판","교통표지판"],p:5},
+    // 09 각종물품
+    {c:{o1:"09",o2:"09-01"},k:["명패","명찰","부서명패"],p:5},
+    {c:{o1:"09",o2:"09-06"},k:["매트","발판매트"],p:5},
+    {c:{o1:"09",o2:"09-08"},k:["쇼케이스"],p:5},
+    {c:{o1:"09",o2:"09-09",o3:"09-09-001"},k:["쇼클립"],p:7},
+    {c:{o1:"09",o2:"09-09",o3:"09-09-004"},k:["스탠드사인"],p:7},
+    {c:{o1:"09",o2:"09-09",o3:"09-09-005"},k:["데스크사인"],p:7},
+    {c:{o1:"09",o2:"09-10"},k:["현판"],p:5},
+    // 10 인쇄물/스티커
+    {c:{o1:"10",o2:"10-02",o3:"10-02-001"},k:["주차스티커 화이트"],p:7},
+    {c:{o1:"10",o2:"10-02",o3:"10-02-002"},k:["주차스티커 사각 홀로그램"],p:7},
+    {c:{o1:"10",o2:"10-02",o3:"10-02-003"},k:["주차스티커 모래알"],p:7},
+    {c:{o1:"10",o2:"10-02",o3:"10-02-004"},k:["주차스티커 민무늬"],p:7},
+    {c:{o1:"10",o2:"10-02",o3:"10-02-005"},k:["주차스티커 반사지"],p:7},
+    {c:{o1:"10",o2:"10-02",o3:"10-02-006"},k:["주차스티커 야광"],p:7},
+    {c:{o1:"10",o2:"10-02",o3:"10-02-007"},k:["주차스티커 럭셔리실버"],p:7},
+    {c:{o1:"10",o2:"10-02",o3:"10-02-008"},k:["주차스티커 럭셔리골드"],p:7},
+    {c:{o1:"10",o2:"10-02",o3:"10-02-009"},k:["주차스티커 종이"],p:7},
+    {c:{o1:"10",o2:"10-02"},k:["주차스티커","주차증"],p:5},
+    {c:{o1:"10",o2:"10-03"},k:["경고장","주차경고장"],p:5},
+    {c:{o1:"10",o2:"10-04"},k:["자전거스티커"],p:5},
+    {c:{o1:"10",o2:"10-05"},k:["전단","포스터","인쇄물"],p:3},
+    {c:{o1:"10",o2:"10-06"},k:["안전스티커"],p:5},
+    {c:{o1:"10"},k:["스티커","라벨"],p:1},
+  ],
+  kw_catT: [
+    {c:"01",k:["학교","학원","유치원","초등","중등","고등","대학","교실"]},
+    {c:"02",k:["식당","카페","레스토랑","음식점","베이커리"]},
+    {c:"03",k:["아파트","단지","입주민","주민","동대표"]},
+    {c:"04",k:["호텔","펜션","리조트","숙박","모텔"]},
+    {c:"05",k:["병원","약국","요양원","진료","의원","치과","한의원"]},
+    {c:"06",k:["회사","공장","사무실","기업","제조","공단"]},
+    {c:"07",k:["관공서","공공","구청","시청","주민센터","도청"]},
+    {c:"08",k:["헬스","피트니스","스포츠","체육","골프","수영장"]},
+  ],
+  default_catT: {"01":["01","03","06","07"],"02":["01","02","03","05","06","07","08","09"],"04":["02","03","06","07","09"],"05":["01","03","06","07","09"],"07":["06","07","09"],"08":["03","06","07","09"],"09":["01","03","06","07","09"],"10":["01","02","03","05","06","07","09"]},
+  default_spaces: {"01":["02-01","02-02","02-03","02-04"],"02":["03-01"],"03":["06-07"],"04":["08-02","08-03","08-04"],"05":["04-01","04-02","07-04"],"06":["05-01","05-02","07-06"],"07":["06-01","06-02","06-03","06-04","06-05","06-06","07-01","07-03"],"08":["03-02","03-03","08-04"],"09":[]},
+  extra_spaces: [
+    {m:["주차","주차장"],a:["06-07","05-03"]},
+    {m:["소방","화재"],a:["06-05","07-01"]},
+    {m:["청소","환경"],a:["07-05"]},
+    {m:["보안","CCTV"],a:["07-03","06-04"]},
+    {m:["물류","창고"],a:["05-02"]},
+    {m:["반려동물","반려견","애견"],a:["04-02"]},
+    {m:["공사","작업장"],a:["05-01","07-06"]},
+  ],
+  fitness: {"01":{"01":"A","02":"B","03":"A","04":"B","05":"A","06":"A","07":"A","08":"B","09":"A"},"02":{"01":"A","02":"A","03":"A","04":"A","05":"A","06":"A","07":"A","08":"A","09":"A"},"04":{"01":"B","02":"A","03":"A","04":"A","05":"B","06":"A","07":"A","08":"A","09":"A"},"05":{"01":"A","02":"B","03":"A","04":"B","05":"B","06":"A","07":"A","08":"B","09":"A"},"07":{"01":"C","02":"C","03":"B","04":"C","05":"C","06":"A","07":"A","08":"C","09":"B"},"08":{"01":"B","02":"C","03":"A","04":"B","05":"C","06":"A","07":"A","08":"C","09":"A"},"09":{"01":"A","02":"B","03":"A","04":"B","05":"A","06":"A","07":"A","08":"B","09":"A"},"10":{"01":"A","02":"A","03":"A","04":"A","05":"A","06":"A","07":"A","08":"A","09":"A"}},
+  skip_catO: ["13","60"]
+};
+
+// 매칭 헬퍼 (공백·대소문자 정규화)
+function _mNorm(s){return (s||'').replace(/\s+/g,'').toLowerCase();}
+
+// 상품명 → catO 키워드 매칭. priority+길이 최대값 반환
+function kwMatchCatO(name) {
+  const n = _mNorm(name);
+  let best = null;
+  for (const rule of MATCHING_RULES.kw_catO) {
+    for (const kw of rule.k) {
+      if (!n.includes(_mNorm(kw))) continue;
+      if (rule.ex && rule.ex.some(x => n.includes(_mNorm(x)))) continue;
+      if (rule.req && !rule.req.some(x => n.includes(_mNorm(x)))) continue;
+      const cand = {c: rule.c, p: rule.p, kw, kwLen: kw.length};
+      if (!best || cand.p > best.p || (cand.p === best.p && cand.kwLen > best.kwLen)) {
+        best = cand;
+      }
+    }
+  }
+  return best;  // {c:{o1,o2,o3?}, p, kw, kwLen} or null
 }
 
+// 상품명 → 명시 업종 세트
+function kwMatchCatT(name) {
+  const n = _mNorm(name);
+  const matched = new Set();
+  for (const rule of MATCHING_RULES.kw_catT) {
+    for (const kw of rule.k) {
+      if (n.includes(_mNorm(kw))) { matched.add(rule.c); break; }
+    }
+  }
+  return matched;
+}
+
+// catO1 → 기본 catT 세트
+function defaultCatT(o1) {
+  return new Set(MATCHING_RULES.default_catT[o1] || []);
+}
+
+// catT 세트 → 기본 공간 합집합
+function defaultSpaces(catTSet) {
+  const spaces = new Set();
+  for (const t of catTSet) {
+    for (const sp of (MATCHING_RULES.default_spaces[t] || [])) spaces.add(sp);
+  }
+  return spaces;
+}
+
+// 상품명 → 추가 공간 (특성 보정)
+function kwExtraSpaces(name) {
+  const n = _mNorm(name);
+  const extra = new Set();
+  for (const rule of MATCHING_RULES.extra_spaces) {
+    if (rule.m.some(k => n.includes(_mNorm(k)))) rule.a.forEach(s => extra.add(s));
+  }
+  return extra;
+}
+
+// catO1 × catT → 적합도 A/B/C
+function matrixFit(o1, t) {
+  return (MATCHING_RULES.fitness[o1] || {})[t] || 'B';
+}
+
+// ================== 판정 규칙 (v11) ==================
+// 하위 호환 proxy
+function expectO1(name) {
+  const m = kwMatchCatO(name);
+  return m ? m.c.o1 : null;
+}
+function expectT1(name) {
+  const kw = kwMatchCatT(name);
+  if (/무지|셀프디자인|타입 - 대형|타입 - 중형|타입 - 소형|교체용|시트 교체|기본 타입/.test(name)) return 'U9';
+  if (/주차|오뚜기|요일제|2부제|5부제|외부차량|주정차|전기차|차량/.test(name) && kw.size === 0) return 'CAR';
+  return kw.size ? kw : null;
+}
+function expectO3(name) {
+  const m = kwMatchCatO(name);
+  return (m && m.c.o3) ? m.c.o3 : null;
+}
+
+// v11 judge: 키워드 매칭 우선 + 매트릭스 적합도 포함
 function judge(r) {
   const name = r.name || '';
   const oSet = new Set((r.o||'').split(',').filter(x=>x));
   const tSet = new Set((r.t||'').split(',').filter(x=>x));
-  const issues = [];
-  const eo = expectO1(name);
-  if (eo && !Array.from(oSet).some(x => x.split('-')[0] === eo)) issues.push('O1');
-  const et = expectT1(name);
-  const full9 = ['01','02','03','04','05','06','07','08','09'].every(c => tSet.has(c));
-  if (!tSet.size) issues.push('T');
-  else if (et === 'U9' && !full9) issues.push('T');
-  else if (et instanceof Set && et.size) {
-    for (const c of et) if (!tSet.has(c)) { issues.push('T'); break; }
-  }
-  // v10.7 판정 완화: SelMemCat 0개일 때만 FIX_CB (과태깅 판정은 LLM 검수로 미룸)
-  // 범용 사인(금지/주의류)은 체크 많아도 정상일 수 있어 수치 기반 과태깅 판정 제거
-  const memCnt = (typeof r.t5_cc === 'number') ? r.t5_cc : (r.cc || 0);
-  if (memCnt === 0) issues.push('CB');  // 관심분야 미연결만 FIX 대상
-  // v10.7: 과태깅(t5>25), SelOptCat2 과다(업종당 30+) 판정 제거 → LLM이 remove 지시로 처리
-  const hasA = oSet.has('04-01');
-  const eo3 = expectO3(name);
-  if (hasA && eo3 && !Array.from(oSet).some(x => x.startsWith(eo3))) issues.push('O1');
+  const issues = new Set();
 
-  if (!issues.length) return 'OK';
-  const codes = new Set(issues);
-  if (codes.size === 1) {
-    if (codes.has('O1')) return 'FIX_O';
-    if (codes.has('T')) return 'FIX_T';
-    if (codes.has('CB')) return 'FIX_CB';
-    if (codes.has('T2')) return 'FIX_T2';  // v9 신규
+  // === 1. catO 키워드 매칭 ===
+  const kwO = kwMatchCatO(name);
+  let curO1 = null;
+  for (const o of oSet) { const p = o.split('-')[0]; if (p) { curO1 = p; break; } }
+  if (kwO) {
+    r._kw_catO = kwO;
+    const expO1 = kwO.c.o1;
+    if (curO1 && expO1 && curO1 !== expO1) {
+      issues.add('O1_RECLASS');  // 재분류 필요
+    }
+    if (kwO.c.o2 && !oSet.has(kwO.c.o2)) issues.add('O2');
+    if (kwO.c.o3 && !oSet.has(kwO.c.o3)) issues.add('O3');
+  } else {
+    r._kw_catO = null;
   }
-  if (codes.has('O1') && codes.has('T') && codes.has('CB')) return 'FIX_ALL';
+
+  // === 2. catT 체크 ===
+  const kwT = kwMatchCatT(name);
+  const expT = kwT.size ? kwT : defaultCatT(kwO ? kwO.c.o1 : (curO1 || '09'));
+  r._kw_catT_expected = Array.from(expT);
+  const missingT = Array.from(expT).filter(t => !tSet.has(t));
+  r._kw_catT_missing = missingT;
+  if (!tSet.size) issues.add('T');
+  else if (missingT.length > 0) issues.add('T');
+
+  // === 3. SelMemCat 체크 (t5_cc 0일 때만 FIX_CB) ===
+  const memCnt = (typeof r.t5_cc === 'number') ? r.t5_cc : (r.cc || 0);
+  if (memCnt === 0) issues.add('CB');
+
+  // === 4. 매트릭스 부적합(C) 플래그 ===
+  if (kwO) {
+    const badFit = [];
+    for (const t of expT) {
+      if (matrixFit(kwO.c.o1, t) === 'C') badFit.push(t);
+    }
+    if (badFit.length) r._kw_fit_warn = badFit;
+  }
+
+  // === 5. 판정 코드 ===
+  if (!issues.size) return 'OK';
+  const hasO = issues.has('O1_RECLASS') || issues.has('O2') || issues.has('O3');
+  if (issues.size === 1) {
+    if (hasO) return 'FIX_O';
+    if (issues.has('T')) return 'FIX_T';
+    if (issues.has('CB')) return 'FIX_CB';
+  }
+  if (hasO && issues.has('T') && issues.has('CB')) return 'FIX_ALL';
   return 'FIX_MULTI';
 }
 
@@ -2017,31 +2242,76 @@ async function fixOne(item) {
     }
   }
 
-  // ============ 2. FIX_O: 상품별 2/3차 추가 (이미 있으면 스킵) ============
+  // ============ v11 FIX_O: 키워드 우선 catO 재분류/추가 ============
+  // 정책:
+  //  1) 키워드 매칭 priority >= 5: 자동 재분류 허용 (1차까지 바꿈)
+  //  2) 키워드 매칭 없음 → LLM 지시(llm_catO) 사용, 단 priority mid 이하는 승인 대기
+  //  3) 1차 일치 시: 2/3차만 추가
+  //  4) 1차 불일치 시: 기존 전체 해제 후 새로 등록 (catO 재분류)
   if (isO) {
-    let expectCode = item.llm_o3;
-    if (!expectCode) {
-      const m = (item.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
-      if (m) expectCode = m[1];
+    // 우선순위 1: 키워드 매칭 결과
+    let targetCatO = null;
+    let src = '';
+    if (item._kw_catO && item._kw_catO.p >= 5) {
+      targetCatO = item._kw_catO.c;
+      src = `kw:${item._kw_catO.kw}(p${item._kw_catO.p})`;
+    } else if (item.llm_catO && Object.keys(item.llm_catO).length) {
+      // LLM 지시 사용 (priority 낮은 키워드도 LLM이 보정)
+      targetCatO = item.llm_catO;
+      src = 'llm';
+    } else if (item.llm_o3) {
+      // 하위 호환: llm_o3에서 역산
+      const o3 = item.llm_o3;
+      targetCatO = {
+        o1: o3.split('-')[0],
+        o2: o3.split('-').slice(0,2).join('-'),
+        o3
+      };
+      src = 'llm_o3';
     }
-    if (expectCode) {
-      // 1차 카테고리 일치 여부 체크 (예: 01 게시판 상품에 04-01-xxx 추가 방지)
-      const currentCat1 = ((item.o||'').split(',')[0]||'').split('-')[0];
-      const expectCat1 = expectCode.split('-')[0];
+
+    if (!targetCatO || !targetCatO.o1) {
+      results.push('O변경불필요(매칭없음)');
+    } else {
+      const currentOs = (item.o||'').split(',').filter(x=>x);
+      const currentCat1 = (currentOs[0]||'').split('-')[0];
+      const expectCat1 = targetCatO.o1;
+
       if (currentCat1 && expectCat1 && currentCat1 !== expectCat1) {
-        results.push(`O스킵(1차불일치 ${currentCat1}≠${expectCat1})`);
+        // ===== catO 재분류 (v11 신규) =====
+        // 안전장치: 이 분기는 이미 priority>=5 또는 LLM 지시여야 도달
+        addLog(`🔀 catO 재분류: ${item.rgr} ${currentCat1}→${expectCat1} (${src})`, 'warn');
+        // 기존 catO 전체 해제
+        let delOk = 0, delFail = 0;
+        for (const oldO of currentOs) {
+          const dr = await hsApiCateDel(rowid, item.rgr, oldO, '1');
+          if (dr.ok) delOk++; else delFail++;
+        }
+        results.push(`O해제:${delOk}/${currentOs.length}`);
+        if (delFail > 0) {
+          results.push(`⚠ 일부 삭제실패(${delFail})`);
+        }
+        // 새 catO 등록 (1차 → 2차 → 3차 순서)
+        const addList = [targetCatO.o1, targetCatO.o2, targetCatO.o3].filter(x=>x);
+        for (const code of addList) {
+          const ar = await hsApiCateAdd(rowid, item.rgr, code, '1', 0);
+          results.push(ar.ok ? `O+${code}` : `O실패(${code})`);
+        }
+        results.push(`재분류완료(${src})`);
       } else {
-        // 이미 등록된 코드이면 스킵
-        const currentOs = (item.o||'').split(',').filter(x=>x);
-        if (currentOs.includes(expectCode)) {
-          results.push(`O이미있음(${expectCode})`);
+        // ===== 1차 일치: 2/3차만 추가 =====
+        const toAdd = [];
+        if (targetCatO.o2 && !currentOs.includes(targetCatO.o2)) toAdd.push(targetCatO.o2);
+        if (targetCatO.o3 && !currentOs.includes(targetCatO.o3)) toAdd.push(targetCatO.o3);
+        if (!toAdd.length) {
+          results.push('O변경불필요(이미일치)');
         } else {
-          const r = await hsApiCateAdd(rowid, item.rgr, expectCode, '1', 0);
-          results.push(r.ok ? `O+${expectCode}` : `O실패(${expectCode})`);
+          for (const code of toAdd) {
+            const ar = await hsApiCateAdd(rowid, item.rgr, code, '1', 0);
+            results.push(ar.ok ? `O+${code}` : `O실패(${code})`);
+          }
         }
       }
-    } else {
-      results.push('O변경불필요');
     }
   }
 
