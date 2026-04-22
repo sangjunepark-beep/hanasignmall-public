@@ -445,8 +445,10 @@ async function fetchGoodsList(page) {
         // 숫자 비율이 50% 이상이면 가격/코드일 가능성 → 제외
         const digitRatio = (t.match(/\d/g)||[]).length / t.length;
         if (digitRatio > 0.5) continue;
-        if (/[가-힣]/.test(t) && t.length > 5 && t.length < 100 &&
-            !/^(상품|임시|판매|숨김|수정|관리|보기|복사|등록|일자|코드|디자인|상세)/.test(t)) {
+        // v11.0.6: 최소 길이 5→3으로 완화 (지주간판, 방향표지판 같은 짧은 상품명 누락 방지)
+        if (/[가-힣]/.test(t) && t.length >= 3 && t.length < 100 &&
+            !/^(상품|임시|판매|숨김|수정|관리|보기|복사|등록|일자|코드|디자인|상세|무료|배송|첫페|마지|이전|다음)/.test(t) &&
+            !/^(공지|판매중|판매완|재고|활성|비활성)$/.test(t)) {
           if (t.length > name.length) name = t;
         }
       }
