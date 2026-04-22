@@ -1100,6 +1100,14 @@ async function main(){
     const tCodes = (r.t||'').split(',').filter(x=>x);
     const tLabels = tCodes.map(c => T1_MAP[c] || c).join(', ');
     const tCount = tCodes.length;
+    // v11.0.5: 현재 체크된 공간 목록 (SelMemCat type=5) 이름으로 변환
+    // t5_list 아이템 형식: '01-02-01' (pfx-sub) → slice(3) = '02-01'
+    const t5Names = [];
+    for (const code of (r.t5_list || [])) {
+      const sp = (code || '').slice(3);  // '01-02-01' → '02-01'
+      if (sp) t5Names.push(SPACE_MAP[sp] || sp);
+    }
+    const spaceLabels = t5Names.length ? t5Names.join(', ') : '(체크 없음)';
     return {
       idx: i+1,
       page: r.page,
@@ -1113,6 +1121,8 @@ async function main(){
       tLabels: tLabels || '(미연결)',
       tCodes,  // v11.0.3: buildProposal 참조용 (원본 r.t 잃지 않게)
       oCodes,  // v11.0.3: 동일 이유
+      spaceLabels,  // v11.0.5: 현재 체크된 공간 이름 목록
+      spaceCount: t5Names.length,  // v11.0.5: 공간 체크 개수 (SelMemCat만)
       cc: r.cc || 0,
       ct: r.ct || 0,
       t5_cc: r.t5_cc || 0,  // v11.0.3: 과태깅 판정용
@@ -1153,18 +1163,17 @@ async function main(){
     return window.XLSX;
   }
 
-  // 판정 → 제안(제안 변경값) 계산 · LLM 결과 우선
-  // v11.0.3: r은 toDisplayRow 변환본이라 r.t가 없음. tCodes는 toDisplayRow에서 저장한 것 사용.
+  // v11.0.5: 가독성 개선 — 이모지·디버그 메시지·기술용어 제거, 평어체 한국어로
   function buildProposal(r) {
     const tCodes = r.tCodes || [];
     const tCurrent = tCodes.length ? tCodes.map(c=>T1_MAP[c]||c).join(', ') : '(미연결)';
-    let oProp = '-', tProp = '-', cbProp = '-';
+    let oProp = '변경없음', tProp = '변경없음', cbProp = '변경없음';
+    let reason = '';  // v11.0.5: 이유는 별도 컬럼으로
     const j = r.judge || 'OK';
     const hasT = ['FIX_T','FIX_ALL','FIX_MULTI'].includes(j);
     const hasO = ['FIX_O','FIX_ALL','FIX_MULTI'].includes(j);
     const hasCB = ['FIX_CB','FIX_ALL','FIX_MULTI'].includes(j);
 
-    // v10.7 add/remove 필드 우선 사용
     const orig = RESULT.items.find(x => x.rgr === r.rgr);
     const llmO3 = orig && orig.llm_o3;
     const llmReason = orig && orig.llm_reason;
@@ -1175,48 +1184,71 @@ async function main(){
     const tAdd   = (orig && orig.llm_catT_add) || [];
     const tRm    = (orig && orig.llm_catT_remove) || [];
     const hasLLM = !!(orig && orig.llm_reason);
+    const isRule = orig && orig.llm_source === 'rule';
 
-    // T 제안 — LLM add/remove 있으면 그걸로
+    // 이유 텍스트 정제 (v11.0.5: 디버그 메시지 'v11 규칙(kw:...)' 제거)
+    if (llmReason) {
+      let cleaned = llmReason;
+      // "v11 규칙(kw:... · 업종:... · 공간 ...개 add)" 형태는 숨김
+      if (/^v11 규칙\(/.test(cleaned)) {
+        cleaned = '키워드 매칭 자동 판정';
+      } else {
+        // LLM 이유 중 앞 100자만
+        cleaned = cleaned.slice(0, 100).replace(/\n/g, ' ');
+        if (llmReason.length > 100) cleaned += '...';
+      }
+      reason = cleaned;
+    }
+
+    // === catT 업종 제안 ===
     if (hasLLM && (tAdd.length || tRm.length)) {
       const parts = [];
-      if (tAdd.length) parts.push('+' + tAdd.map(c=>T1_MAP[c]||c).join(','));
-      if (tRm.length)  parts.push('-' + tRm.map(c=>T1_MAP[c]||c).join(','));
-      tProp = '🧠 ' + parts.join(' / ');
+      if (tAdd.length) parts.push('추가 ' + tAdd.map(c=>T1_MAP[c]||c).join(', '));
+      if (tRm.length)  parts.push('해제 ' + tRm.map(c=>T1_MAP[c]||c).join(', '));
+      tProp = parts.join(' / ');
     } else if (hasT) {
       const allT = ['01','02','03','04','05','06','07','08','09'];
       const missing = allT.filter(c => !tCodes.includes(c));
-      if (missing.length) tProp = `9업종 기본 연결 (${missing.length}개 추가)`;
-      else tProp = '유지';
-    } else if (hasLLM) {
-      tProp = '유지';
+      if (missing.length === 9) tProp = '9업종 모두 연결 필요';
+      else if (missing.length) tProp = `${missing.length}개 추가: ` + missing.map(c=>T1_MAP[c]).join(', ');
+      else tProp = '변경없음';
     }
 
-    // O 제안
+    // === catO 상품별 제안 ===
     if (llmO3) {
-      oProp = `🧠 + ${labelO(llmO3)}${llmReason ? '\n(' + llmReason.slice(0,50) + ')' : ''}`;
+      oProp = labelO(llmO3);  // 예: "02-04 유도안내"
     } else if (hasO) {
       const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
-      oProp = m ? `+ ${labelO(m[1])}` : '상품별 3차 보완 필요 (🧠 LLM 판정 권장)';
-    } else if (hasLLM) {
-      oProp = '유지';
+      oProp = m ? labelO(m[1]) : '(LLM 판정 필요)';
     }
 
-    // CB 제안 — v10.7 SelMemCat + SelOptCat2 add/remove 통합 표기
+    // === 관심분야 공간 제안 ===
     const cbLines = [];
-    if (memAdd.length) cbLines.push(`SelMemCat 추가 ${memAdd.length}: ${memAdd.slice(0,5).map(labelSpace).join(', ')}${memAdd.length>5?'...':''}`);
-    if (memRm.length)  cbLines.push(`SelMemCat 해제 ${memRm.length}: ${memRm.slice(0,5).map(labelSpace).join(', ')}${memRm.length>5?'...':''}`);
+    if (memAdd.length) {
+      // 상위 5개 공간 이름으로 표시
+      const names = memAdd.slice(0, 5).map(c => (SPACE_MAP[c] || c));
+      const more = memAdd.length > 5 ? ` 외 ${memAdd.length-5}개` : '';
+      cbLines.push(`공간 ${memAdd.length}개 추가: ${names.join(', ')}${more}`);
+    }
+    if (memRm.length) {
+      const names = memRm.slice(0, 5).map(c => (SPACE_MAP[c] || c));
+      const more = memRm.length > 5 ? ` 외 ${memRm.length-5}개` : '';
+      cbLines.push(`공간 ${memRm.length}개 해제: ${names.join(', ')}${more}`);
+    }
     const t2AddCnt = Object.values(t2Add).reduce((a,b)=>a+(b||[]).length, 0);
     const t2RmCnt  = Object.values(t2Rm).reduce((a,b)=>a+(b||[]).length, 0);
-    if (t2AddCnt) cbLines.push(`업종별공간 추가 ${t2AddCnt}개`);
-    if (t2RmCnt)  cbLines.push(`업종별공간 해제 ${t2RmCnt}개`);
+    if (t2AddCnt) cbLines.push(`업종×공간 ${t2AddCnt}개 추가`);
+    if (t2RmCnt)  cbLines.push(`업종×공간 ${t2RmCnt}개 해제`);
+
     if (cbLines.length) {
-      cbProp = '🧠 (현재 유지 + 손 댈 곳만)\n' + cbLines.join('\n');
+      cbProp = cbLines.join('\n');
     } else if (hasLLM) {
-      cbProp = '🧠 변경 없음 (현재 상태 적절)';
+      cbProp = '변경없음';
     } else if (hasCB) {
-      cbProp = `🧠 LLM 판정 권장 (현재 체크 ${r.cc||0}개)`;
+      cbProp = `LLM 판정 필요`;
     }
-    return {oProp, tProp, cbProp, tCurrent};
+
+    return {oProp, tProp, cbProp, tCurrent, reason, isRule};
   }
 
   // 스타일 헬퍼 (v11.0.2: 새 라벨에 맞게 스타일 매핑 갱신)
@@ -1257,19 +1289,19 @@ async function main(){
       const XLSX = await loadSheetJS();
       const wb = XLSX.utils.book_new();
 
-      // 헤더 정의 (before/after 비교)
+      // v11.0.5: 가독성 개선 — "판정" 열 제거(상태와 중복), "현재 공간" 열 추가, "변경 이유" 열 추가
       const H = [
-        '#', '페이지', '상태', '판정', '상품명', 'RgrCode',
+        '#', '페이지', '상태', '상품명', 'RgrCode',
         '현재 상품별(O)', '제안 상품별 변경',
         '현재 업종수', '현재 연결 업종', '제안 업종 변경',
-        '현재 체크수', '제안 체크 변경',
-        '권장 조치',
+        '현재 공간수', '현재 체크된 공간', '공간 변경 제안',
+        '변경 이유', '권장 조치',
       ];
-      const colW = [{wch:4},{wch:6},{wch:12},{wch:10},{wch:40},{wch:20},
-                    {wch:30},{wch:30},
-                    {wch:8},{wch:30},{wch:38},
-                    {wch:8},{wch:32},
-                    {wch:24}];
+      const colW = [{wch:4},{wch:6},{wch:14},{wch:40},{wch:20},
+                    {wch:28},{wch:28},
+                    {wch:8},{wch:30},{wch:30},
+                    {wch:8},{wch:40},{wch:40},
+                    {wch:40},{wch:22}];
 
       function buildAOA(items) {
         // 헤더 행
@@ -1279,36 +1311,42 @@ async function main(){
           const stStyle = STATUS_STYLE[r.status] || {};
           const prop = buildProposal(r);
           const isFix = r.judge && r.judge !== 'OK';
+          const hasChange = prop.oProp !== '변경없음' || prop.tProp !== '변경없음' || prop.cbProp !== '변경없음';
 
-          // 각 셀 스타일
-          const c_status = styleCell(r.status, {fill: stStyle.fill, fontColor: stStyle.font, bold:true, align:'center'});
-          const c_judge  = styleCell(r.judge,  {fill: stStyle.fill, fontColor: stStyle.font, align:'center'});
+          // v11.0.5: 판정 열 제거. 상태 열만 (한글 라벨)
+          const c_status = styleCell(r.status, {fill: stStyle.fill, fontColor: stStyle.font, bold:true, align:'center', wrap:true});
           const c_idx    = styleCell(r.idx,    {align:'center'});
           const c_page   = styleCell(r.page,   {align:'center'});
           const c_name   = styleCell(r.name,   {wrap:true});
           const c_rgr    = styleCell(r.rgr,    {font:'Consolas', align:'center'});
-          // 상품별
+
+          // 상품별(O)
           const c_oCurr  = styleCell(r.oDetail || (r.productType||'-'),
-                                     (prop.oProp!=='-') ? CURR_STYLE_BAD : CURR_STYLE_OK);
-          const c_oProp  = styleCell(prop.oProp, prop.oProp==='-' ? PROP_STYLE_NONE : PROP_STYLE_FIX);
-          // 업종
+                                     (prop.oProp!=='변경없음') ? CURR_STYLE_BAD : CURR_STYLE_OK);
+          const c_oProp  = styleCell(prop.oProp, prop.oProp==='변경없음' ? PROP_STYLE_NONE : PROP_STYLE_FIX);
+
+          // 업종 (T)
           const c_tCount = styleCell(r.tCount,
-                                     (prop.tProp!=='-' && prop.tProp!=='유지') ? CURR_STYLE_BAD : CURR_STYLE_OK);
-          const c_tCurr  = styleCell(prop.tCurrent,
-                                     (prop.tProp!=='-' && prop.tProp!=='유지') ? CURR_STYLE_BAD : CURR_STYLE_OK);
-          const c_tProp  = styleCell(prop.tProp, prop.tProp==='-' ? PROP_STYLE_NONE : (prop.tProp==='유지' ? CURR_STYLE_OK : PROP_STYLE_FIX));
-          // 체크수
-          const c_cc     = styleCell(r.cc,
-                                     (prop.cbProp!=='-') ? CURR_STYLE_BAD : CURR_STYLE_OK);
-          const c_cbProp = styleCell(prop.cbProp, prop.cbProp==='-' ? PROP_STYLE_NONE : PROP_STYLE_FIX);
+                                     (prop.tProp!=='변경없음') ? CURR_STYLE_BAD : CURR_STYLE_OK);
+          const c_tCurr  = styleCell(prop.tCurrent, {wrap:true, ...((prop.tProp!=='변경없음') ? CURR_STYLE_BAD : CURR_STYLE_OK)});
+          const c_tProp  = styleCell(prop.tProp, prop.tProp==='변경없음' ? PROP_STYLE_NONE : PROP_STYLE_FIX);
+
+          // 공간 (SelMemCat)
+          const c_spCount = styleCell(r.spaceCount, {align:'center'});
+          const c_spCurr  = styleCell(r.spaceLabels, {wrap:true});  // v11.0.5: 모든 상품에 표시
+          const c_cbProp  = styleCell(prop.cbProp, prop.cbProp==='변경없음' ? PROP_STYLE_NONE : PROP_STYLE_FIX);
+
+          // 이유 (v11.0.5: 별도 컬럼)
+          const c_reason  = styleCell(prop.reason || '-', {wrap:true, fontSize:10, fontColor:'666666'});
+
           // 권장 조치
           const c_fix = styleCell(r.fix, isFix ? {fill:'FEF3C7', fontColor:'92400E', bold:true} : PROP_STYLE_NONE);
 
-          rows.push([c_idx, c_page, c_status, c_judge, c_name, c_rgr,
+          rows.push([c_idx, c_page, c_status, c_name, c_rgr,
                      c_oCurr, c_oProp,
                      c_tCount, c_tCurr, c_tProp,
-                     c_cc, c_cbProp,
-                     c_fix]);
+                     c_spCount, c_spCurr, c_cbProp,
+                     c_reason, c_fix]);
         }
         return rows;
       }
