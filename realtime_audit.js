@@ -974,13 +974,14 @@ async function main(){
   function labelSpace(code) {
     return SPACE_MAP[code] ? `${code} ${SPACE_MAP[code]}` : code;
   }
+  // v11.0.2: 라벨을 실제 판정 로직과 일치시킴 (기존 v10 라벨은 오해 유발)
   const JUDGE_KR = {
-    'OK':        {s:'정상',       d:'3차원 모두 정상',                     f:'-',                          p:0},
-    'FIX_T':     {s:'업종 미연결', d:'업종 카테고리 미설정/부족',            f:'업종 9개 일괄 연결',           p:3},
-    'FIX_O':     {s:'카테고리 오류', d:'상품별 3차 카테고리 부적합',          f:'상품명에 맞는 3차 코드로 교체', p:2},
-    'FIX_CB':    {s:'과태깅',     d:'관심분야 체크박스 과다(30 초과)',      f:'체크박스 재정리',             p:1},
-    'FIX_MULTI': {s:'복합 문제',   d:'2개 이상 차원에 문제',                f:'개별 확인 후 수정',           p:4},
-    'FIX_ALL':   {s:'전체 미설정', d:'상품별+업종별+관심분야 모두 미설정',   f:'처음부터 재설정',             p:5},
+    'OK':        {s:'정상',         d:'3차원 모두 정상',                     f:'-',                            p:0},
+    'FIX_T':     {s:'업종 부족',     d:'업종 연결 부족 (키워드 기준 누락)',    f:'키워드 매칭 업종 추가',         p:3},
+    'FIX_O':     {s:'카테고리 부족',  d:'상품별 2/3차 부족 또는 1차 재분류 필요', f:'키워드 매칭 카테고리 교체',   p:2},
+    'FIX_CB':    {s:'관심분야 미연결', d:'SelMemCat 공간 체크 없음',           f:'관심분야 공간 추가',            p:1},
+    'FIX_MULTI': {s:'복합 문제',      d:'2개 이상 차원에 문제',                f:'개별 확인 후 수정',             p:4},
+    'FIX_ALL':   {s:'전체 미설정',    d:'상품별+업종별+관심분야 모두 미설정',    f:'처음부터 재설정',               p:5},
   };
 
   // 각 item을 표시용 행으로 변환
@@ -1111,14 +1112,18 @@ async function main(){
     return {oProp, tProp, cbProp, tCurrent};
   }
 
-  // 스타일 헬퍼
+  // 스타일 헬퍼 (v11.0.2: 새 라벨에 맞게 스타일 매핑 갱신)
   const STATUS_STYLE = {
-    '정상':        {fill:'C6EFCE', font:'006100'},
-    '과태깅':      {fill:'FFEB9C', font:'9C5700'},
-    '업종 미연결':  {fill:'FFC7CE', font:'9C0006'},
-    '카테고리 오류': {fill:'FFD580', font:'9C5700'},
-    '복합 문제':   {fill:'F8CBAD', font:'9C0006'},
-    '전체 미설정':  {fill:'F8CBAD', font:'9C0006'},
+    '정상':            {fill:'C6EFCE', font:'006100'},
+    '업종 부족':        {fill:'FFC7CE', font:'9C0006'},
+    '카테고리 부족':    {fill:'FFD580', font:'9C5700'},
+    '관심분야 미연결':  {fill:'FFEB9C', font:'9C5700'},
+    '복합 문제':        {fill:'F8CBAD', font:'9C0006'},
+    '전체 미설정':      {fill:'F8CBAD', font:'9C0006'},
+    // 하위호환 (옛 라벨 잔존 대비)
+    '업종 미연결':      {fill:'FFC7CE', font:'9C0006'},
+    '카테고리 오류':    {fill:'FFD580', font:'9C5700'},
+    '과태깅':          {fill:'FFEB9C', font:'9C5700'},
   };
   function styleCell(text, opts){
     const s = {
@@ -1954,9 +1959,9 @@ ${lines.join('\n')}`;
     const byJ = {};
     for (const r of fixItems) byJ[r.judge] = (byJ[r.judge]||0) + 1;
     const statsParts = [];
-    if (byJ.FIX_T)     statsParts.push(`FIX_T ${byJ.FIX_T}건 (업종 9개 연결)`);
-    if (byJ.FIX_O)     statsParts.push(`FIX_O ${byJ.FIX_O}건 (상품별 3차 추가)`);
-    if (byJ.FIX_CB)    statsParts.push(`FIX_CB ${byJ.FIX_CB}건 (체크박스 전체 해제)`);
+    if (byJ.FIX_T)     statsParts.push(`FIX_T ${byJ.FIX_T}건 (업종 부족 · 키워드 매칭 추가)`);
+    if (byJ.FIX_O)     statsParts.push(`FIX_O ${byJ.FIX_O}건 (카테고리 부족 · 키워드 매칭 재분류)`);
+    if (byJ.FIX_CB)    statsParts.push(`FIX_CB ${byJ.FIX_CB}건 (관심분야 미연결 · 공간 추가)`);
     if (byJ.FIX_MULTI) statsParts.push(`FIX_MULTI ${byJ.FIX_MULTI}건`);
     if (byJ.FIX_ALL)   statsParts.push(`FIX_ALL ${byJ.FIX_ALL}건`);
     $('ha-fix-stats').innerHTML = `수정 대상 <b>${fixItems.length}건</b><br>` + statsParts.join(' · ');
@@ -1974,12 +1979,12 @@ ${lines.join('\n')}`;
 
 // ==================== 자동 수정 로직 ====================
 async function runAutoFix(fixItems) {
-  const confirmMsg = `FIX 판정 ${fixItems.length}건을 자동 수정합니다.\n\n` +
-    `• FIX_T: 업종 9개 일괄 연결\n` +
-    `• FIX_O: 상품별 3차 카테고리 추가 (LLM/reason 우선)\n` +
-    `• FIX_CB: 체크박스 전체 해제 + LLM 공간 재체크\n\n` +
+  const confirmMsg = `FIX 판정 ${fixItems.length}건을 자동 수정합니다. (v11 매칭 엔진)\n\n` +
+    `• FIX_T: 키워드 매칭 업종 add (기존 연결 유지)\n` +
+    `• FIX_O: 키워드 매칭 catO 재분류 또는 2/3차 추가\n` +
+    `• FIX_CB: 관심분야 공간 add (기존 연결 유지)\n\n` +
     `🛡️ 수정 전에 롤백용 현재 상태 백업을 자동 다운로드합니다.\n` +
-    `⚠️ 수정은 되돌리기 어려우니 백업 파일을 꼭 보관하세요. 계속?`;
+    `⚠️ catO 재분류는 1차까지 교체되므로 영향 큼. 백업 필수 보관.`;
   if (!confirm(confirmMsg)) { addLog('자동 수정 취소', 'warn'); return; }
 
   // ========== 🛡️ 롤백 백업 생성 ==========
