@@ -185,7 +185,7 @@ root.innerHTML = `
 </style>
 
 <div class="ha-header" id="ha-drag">
-  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7">v10.7.4</span></div>
+  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7;color:#4ade80">v11</span></div>
   <div class="ha-ctrl">
     <button class="ha-btn" id="ha-min">─</button>
     <button class="ha-btn" id="ha-stop">■</button>
@@ -801,6 +801,7 @@ const RESULT = {config: CFG, started: startStr, items: []};
 
 // ================== 메인 파이프라인 ==================
 async function main(){
+  addLog('🚀 v11 매칭 엔진 로드 · 규칙 ' + MATCHING_RULES.kw_catO.length + '개 활성', 'ok');
   addLog('파이프라인 시작 · 카테고리=' + CFG.cat + (CFG.catName ? ' ('+CFG.catName+')' : ''), 'sys');
   // 현재 탭 필터 상태 로그
   if (location.pathname.includes('GoodsList.php')) {
