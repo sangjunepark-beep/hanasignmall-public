@@ -177,7 +177,7 @@ root.innerHTML = `
 </style>
 
 <div class="ha-header" id="ha-drag">
-  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7">v10.7.3</span></div>
+  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7">v10.7.4</span></div>
   <div class="ha-ctrl">
     <button class="ha-btn" id="ha-min">─</button>
     <button class="ha-btn" id="ha-stop">■</button>
@@ -655,7 +655,9 @@ async function main(){
     for (const r of results) {
       RESULT.items.push(r);
       metrics.done++;
-      if (r.cc > 100) metrics.over++;
+      // v10.7.4: 과태깅 카운트 기준 수정 (cc>100 옛 기준 → SelMemCat(t5)>25 실질 기준)
+      // cc는 type=1/2/5 전부 합산이라 범용 상품은 당연히 높음. 실제 과태깅은 t5 기준이 맞음.
+      if ((r.t5_cc || 0) > 25) metrics.over++;
       const tCount = (r.t||'').split(',').filter(x=>x).length;
       const cls = r.cc > 100 ? 'err' : r.cc > 30 ? 'warn' : 'ok';
       addLog(`audit ${r.rgr} · O[${(r.o||'').slice(0,18)}] T[${tCount}] cb=${r.cc}/${r.ct}`, cls);
@@ -781,7 +783,7 @@ async function main(){
       tLabels: tLabels || '(미연결)',
       cc: r.cc || 0,
       ct: r.ct || 0,
-      over: (r.cc > 30) ? 'O' : '',
+      over: ((r.t5_cc || 0) > 25) ? 'O' : '',  // v10.7.4: t5 기준
       judge: r.judge,
       fix: j.f,
       priority: j.p,
