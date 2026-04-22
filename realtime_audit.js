@@ -1,5 +1,12 @@
 /**
- * 하나사인몰 어드민 실시간 감사 대시보드 (v10 · 2026-04-21)
+ * 하나사인몰 어드민 실시간 감사 대시보드 (v10.6 · 2026-04-22)
+ *
+ * v10.6 변경점 (사고 재발 방지):
+ *   [백업] before 필드 명시 복사 + 빈문자열 기본값 (undefined 저장 사고 방지)
+ *   [롤백] all_items_snapshot 자동 fallback (before 빈값이면 snapshot 사용)
+ *   [롤백 안전장치 ★] before가 여전히 빈값이면 "삭제" 작업 전체 skip
+ *                    = 롤백이 데이터를 지우는 사고 원천 차단. 추가만 수행.
+ *
  *
  * v10 주요 변경점:
  *   [LLM 판정] 4축 통합 (catO/catT/SelMemCat/SelOptCat2 전부)
@@ -158,7 +165,7 @@ root.innerHTML = `
 </style>
 
 <div class="ha-header" id="ha-drag">
-  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7">v10</span></div>
+  <div class="ha-title"><span class="ha-live"></span>하나사인몰 실시간 감사 <span style="font-size:11px;opacity:.7">v10.6</span></div>
   <div class="ha-ctrl">
     <button class="ha-btn" id="ha-min">─</button>
     <button class="ha-btn" id="ha-stop">■</button>
@@ -1633,7 +1640,13 @@ ${lines.join('\n')}`;
     addLog(`🔙 롤백 시작 · ${backup.items.length}건`, 'sys');
 
     // 롤백 대상은 items (수정 대상이었던 것) 우선
-    // 필요 시 all_items_snapshot 로 전체 복원도 가능 (이번은 items만)
+    // v10.6: before가 빈값인 item에 all_items_snapshot 자동 주입 (사고 재발 방지)
+    const snapMap = new Map();
+    (backup.all_items_snapshot||[]).forEach(s => snapMap.set(s.rgr, s));
+    backup.items.forEach(bit => {
+      const snap = snapMap.get(bit.rgr);
+      if (snap) bit._snapshot = snap;
+    });
     const targets = backup.items;
     let done=0, okCnt=0, errCnt=0;
     for (const bit of targets) {
@@ -1737,13 +1750,14 @@ function autoFixBackup(fixItems) {
       name: it.name,
       page: it.page,
       judge: it.judge,
+      // v10.6: 명시 복사 + 빈 문자열 기본값 (undefined로 저장되어 롤백이 빈값으로 읽는 사고 방지)
       before: {
-        o: it.o,
-        t: it.t,
-        cc: it.cc,
-        ct: it.ct,
-        cd: it.cd || {},
-        checked_values: it.checked_values || [],  // 롤백용 핵심 데이터
+        o: (typeof it.o === 'string') ? it.o : '',
+        t: (typeof it.t === 'string') ? it.t : '',
+        cc: (typeof it.cc === 'number') ? it.cc : 0,
+        ct: (typeof it.ct === 'number') ? it.ct : 0,
+        cd: it.cd ? JSON.parse(JSON.stringify(it.cd)) : {},
+        checked_values: Array.isArray(it.checked_values) ? it.checked_values.slice() : [],
       },
       planned: {
         o3_add: it.llm_o3 || (it.reason && (it.reason.match(/O3:(\d{2}-\d{2}-\d{3})/)||[])[1]) || null,
@@ -2106,19 +2120,29 @@ async function rollbackOne(bit) {
   const rowid = state.rowid;
   if (!rowid) return 'rowid 없음';
 
-  const beforeO = new Set((bit.before && bit.before.o || '').split(',').filter(x=>x));
-  const beforeT = new Set((bit.before && bit.before.t || '').split(',').filter(x=>x));
-  const beforeCheckedValues = new Set(bit.before && bit.before.checked_values || []);
+  // v10.6: before가 빈값이면 bit._snapshot (all_items_snapshot fallback)에서 보완
+  let _bO = (bit.before && bit.before.o) || '';
+  let _bT = (bit.before && bit.before.t) || '';
+  let _bCV = (bit.before && bit.before.checked_values) || [];
+  if ((!_bO && !_bT && !_bCV.length) && bit._snapshot) {
+    _bO = bit._snapshot.o || ''; _bT = bit._snapshot.t || '';
+    _bCV = bit._snapshot.checked_values || [];
+  }
+  const beforeO = new Set(_bO.split(',').filter(x=>x));
+  const beforeT = new Set(_bT.split(',').filter(x=>x));
+  const beforeCheckedValues = new Set(_bCV);
   const currO = new Set(state.o);
   const currT = new Set(state.t);
   const currCheckedValues = new Set(state.checked_values);
 
+  // v10.6 ★ 안전장치: before가 여전히 빈값이면 "삭제" 작업 전체 skip
+  // (before 미기입 = 원상태 모름 → 삭제하면 데이터 망가짐. 추가만 수행)
+  const hasValidBefore = !!(beforeO.size || beforeT.size || beforeCheckedValues.size);
+
   let logs = [];
 
-  // 1. 업종 T 복원
-  //   - 추가된 (현재O & 백업X) → 삭제
-  //   - 빠진 (백업O & 현재X) → 추가
-  const tToRemove = [...currT].filter(c => !beforeT.has(c));
+  // 1. 업종 T 복원 (★ 안전장치 적용)
+  const tToRemove = hasValidBefore ? [...currT].filter(c => !beforeT.has(c)) : [];
   const tToAdd = [...beforeT].filter(c => !currT.has(c));
   if (tToRemove.length) {
     const r = await Promise.all(tToRemove.map(c => hsApiCateDel(rowid, bit.rgr, c, '2')));
@@ -2129,8 +2153,8 @@ async function rollbackOne(bit) {
     logs.push(`T+${r.filter(x=>x.ok).length}`);
   }
 
-  // 2. 상품별 O 복원 (catO1/2/3 전체)
-  const oToRemove = [...currO].filter(c => !beforeO.has(c));
+  // 2. 상품별 O 복원 (★ 안전장치 적용)
+  const oToRemove = hasValidBefore ? [...currO].filter(c => !beforeO.has(c)) : [];
   const oToAdd = [...beforeO].filter(c => !currO.has(c));
   if (oToRemove.length) {
     const r = await Promise.all(oToRemove.map(c => hsApiCateDel(rowid, bit.rgr, c, '1')));
@@ -2141,8 +2165,8 @@ async function rollbackOne(bit) {
     logs.push(`O+${r.filter(x=>x.ok).length}`);
   }
 
-  // 3. 체크박스 복원 (value 전체 기반)
-  const cbToUncheck = [...currCheckedValues].filter(v => CBR_R.test(v) && !beforeCheckedValues.has(v));
+  // 3. 체크박스 복원 (★ 안전장치 적용)
+  const cbToUncheck = hasValidBefore ? [...currCheckedValues].filter(v => CBR_R.test(v) && !beforeCheckedValues.has(v)) : [];
   const cbToCheck = [...beforeCheckedValues].filter(v => CBR_R.test(v) && !currCheckedValues.has(v));
   if (cbToUncheck.length) {
     let ok = 0;
