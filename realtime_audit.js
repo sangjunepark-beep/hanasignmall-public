@@ -1923,17 +1923,22 @@ async function fixOne(item) {
   }
   if (!rowid) return 'rowid 없음';
 
-  // ============ 1. FIX_T: 누락 업종 병렬 추가 ============
-  if (isT) {
-    const missing = ['01','02','03','04','05','06','07','08','09'].filter(c => !connectedT.has(c));
+  // ============ 1. 업종 연결 (v10.5: judge 무관 · LLM catT_keep 우선) ============
+  // llm_catT_keep 있으면 그 배열 기준. 없으면 기존 FIX_T 로직(9개 일괄)
+  const expectedT = (item.llm_catT_keep && item.llm_catT_keep.length)
+    ? item.llm_catT_keep
+    : (isT ? ['01','02','03','04','05','06','07','08','09'] : null);
+  if (expectedT) {
+    const missing = expectedT.filter(c => !connectedT.has(c));
     if (missing.length) {
-      // 병렬로 동시에 9개 업종 추가 요청
       const results_t = await Promise.all(
         missing.map(code => hsApiCateAdd(rowid, item.rgr, code, '2', connectedT.size))
       );
       const ok_n = results_t.filter(r => r.ok).length;
       results.push(`T+${ok_n}/${missing.length}`);
-    } else {
+      // 추가된 업종을 connectedT에 반영 (이후 로직에서 참조)
+      missing.forEach(c => connectedT.add(c));
+    } else if (isT || item.llm_catT_keep) {
       results.push('T이미완료');
     }
   }
@@ -1966,53 +1971,48 @@ async function fixOne(item) {
     }
   }
 
-  // ============ 3. FIX_CB: 체크박스 해제 + 재체크 (type=5 관심분야만!) ============
-  if (isCB) {
-    // ⚠️ type=5만 조작. type=1(상품 세부속성), type=2(업종x공간 매트릭스)는 건드리지 않음
+  // ============ 3. FIX_CB: 체크박스 해제 + 재체크 (type=5 관심분야) — v10.5 개선 ============
+  // v10.5: 해제할 type=5가 없어도 LLM 추천 있으면 재체크 실행
+  if (isCB || (item.llm_spaces && item.llm_spaces.length)) {
     const CBR_F = /^(\d{2})`5`(\d{2}-\d{2})`/;
-    // 3-1. 현재 체크된 관심분야(type=5)만 해제 (병렬)
     const targetsToUncheck = existingCheckedValues.filter(v => CBR_F.test(v));
+    let offOk = 0, onOk = 0;
+    // 3-1. 해제할 type=5 있으면 해제 (병렬)
     if (targetsToUncheck.length) {
-      // 10개씩 묶어서 병렬 처리 (서버 부하 조절)
-      let offOk = 0;
       for (let i=0; i<targetsToUncheck.length; i+=10) {
         const batch = targetsToUncheck.slice(i, i+10);
         const results_cb = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, false)));
         offOk += results_cb.filter(r => r.ok).length;
       }
-      // 3-2. LLM 지정 공간 재체크
-      let onOk = 0;
-      if (item.llm_spaces && item.llm_spaces.length) {
-        // 재체크 전에 현재 상태 재조회 (업종 추가 반영된 상태)
-        await new Promise(r=>setTimeout(r, 300));
-        const state = await hsFetchState(item.rgr);
-        if (state) {
-          // 업종별로 해당 공간 코드 찾아서 체크
-          const CBR_F2 = /^(\d{2})`5`(\d{2}-\d{2})`(.*)$/;  // type=5만
-          // 편집 페이지 HTML에서 type=5 체크박스 value 전체 수집
-          const url2 = `/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`;
-          const res2 = await fetch(url2, {credentials:'include'});
-          const html2 = await res2.text();
-          const doc2 = new DOMParser().parseFromString(html2, 'text/html');
-          const allValues = [];
-          doc2.querySelectorAll('input[type="checkbox"]').forEach(x=>{
-            if (CBR_F.test(x.value||'')) allValues.push(x.value);
-          });
-          // LLM 제안 공간별로 매칭되는 value 찾아서 체크
-          const toCheck = [];
-          for (const target of item.llm_spaces) {
-            const matches = allValues.filter(v => {
-              const m = v.match(CBR_F2);
-              return m && m[2] === target;
-            });
-            toCheck.push(...matches);
-          }
-          for (let i=0; i<toCheck.length; i+=10) {
-            const batch = toCheck.slice(i, i+10);
-            const results_on = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, true)));
-            onOk += results_on.filter(r => r.ok).length;
-          }
-        }
+    }
+    // 3-2. LLM 지정 공간 재체크 (v10.5: 해제 건수 무관하게 항상 시도)
+    if (item.llm_spaces && item.llm_spaces.length) {
+      await new Promise(r=>setTimeout(r, 500));  // 업종 추가 반영 대기 (v10.5: 300→500ms)
+      const CBR_F2 = /^(\d{2})`5`(\d{2}-\d{2})`(.*)$/;
+      const url2 = `/AdminManager/MakeGoodsTypeOneDp.php?RgrCode=${item.rgr}&EditMode=1`;
+      const res2 = await fetch(url2, {credentials:'include'});
+      const html2 = await res2.text();
+      const doc2 = new DOMParser().parseFromString(html2, 'text/html');
+      const allValues = [];
+      doc2.querySelectorAll('input[type="checkbox"]').forEach(x=>{
+        if (CBR_F.test(x.value||'')) allValues.push(x.value);
+      });
+      const toCheck = [];
+      for (const target of item.llm_spaces) {
+        const matches = allValues.filter(v => {
+          const m = v.match(CBR_F2);
+          return m && m[2] === target;
+        });
+        toCheck.push(...matches);
+      }
+      for (let i=0; i<toCheck.length; i+=10) {
+        const batch = toCheck.slice(i, i+10);
+        const results_on = await Promise.all(batch.map(v => hsApiCbToggle(item.rgr, v, true)));
+        onOk += results_on.filter(r => r.ok).length;
+      }
+      if (onOk === 0 && toCheck.length === 0) {
+        // LLM이 지정한 공간 코드가 페이지에 존재 안 함 — 업종 연결 실패 가능성
+        results.push('CB재체크타깃없음(업종미연결?)');
       }
       results.push(`CB-${offOk}+${onOk}`);
     } else {
