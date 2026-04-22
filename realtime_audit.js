@@ -722,6 +722,55 @@ function matrixFit(o1, t) {
   return (MATCHING_RULES.fitness[o1] || {})[t] || 'B';
 }
 
+// ==================== v11.1 규칙 기반 자동 판정 (LLM 전 단계) ====================
+// 키워드 매칭 강하고 매트릭스 적합이면 LLM 없이 규칙만으로 add/remove 지시 생성
+// 반환값 true = 해결 완료 (LLM 불필요) · false = LLM 필요
+function ruleBasedResolve(item) {
+  const kwO = item._kw_catO;
+  // 조건 1: 키워드 매칭 priority >= 5 (명확한 매칭)
+  if (!kwO || kwO.p < 5) return false;
+
+  // 조건 2: 매트릭스 부적합(C) 경고 있으면 LLM 검증 필요
+  if (item._kw_fit_warn && item._kw_fit_warn.length > 0) return false;
+
+  const name = item.name || '';
+  const kwT = kwMatchCatT(name);
+  const expT = kwT.size ? kwT : defaultCatT(kwO.c.o1);
+
+  // 1. catO 지시 (재분류 또는 2/3차 추가)
+  item.llm_catO = {
+    o1: kwO.c.o1,
+    o2: kwO.c.o2 || null,
+    o3: kwO.c.o3 || null
+  };
+  item.llm_o3 = kwO.c.o3 || kwO.c.o2 || null;
+
+  // 2. catT add (기존 없는 것만)
+  const curT = new Set((item.t||'').split(',').filter(x=>x));
+  const tAdd = Array.from(expT).filter(t => !curT.has(t));
+  item.llm_catT_add = tAdd;
+  item.llm_catT_remove = [];  // 규칙 기반은 remove 안 함 (수동 태그 존중)
+
+  // 3. SelMemCat 공간 add (매트릭스 기반 + 키워드 보정)
+  const baseSpaces = defaultSpaces(expT);
+  const extraSpaces = kwExtraSpaces(name);
+  const targetSpaces = new Set([...baseSpaces, ...extraSpaces]);
+  const curSpaces = new Set(item.t5_list || []);
+  const spAdd = Array.from(targetSpaces).filter(s => !curSpaces.has(s));
+  item.llm_selMemCat_add = spAdd;
+  item.llm_selMemCat_remove = [];  // 규칙 기반은 remove 안 함
+
+  // 4. SelOptCat2 (업종×공간) — 규칙만으론 어려움, LLM이 해결할 영역이므로 빈 객체
+  item.llm_selOptCat2_add = {};
+  item.llm_selOptCat2_remove = {};
+
+  // 5. 메타 정보
+  item.llm_reason = `v11 규칙(kw:${kwO.kw} p${kwO.p} · 업종:${Array.from(expT).join(',') || '기본'} · 공간 ${spAdd.length}개 add)`;
+  item.llm_source = 'rule';  // 규칙 기반임을 표시 (Excel/UI에서 구분용)
+
+  return true;
+}
+
 // ================== 판정 규칙 (v11) ==================
 // 하위 호환 proxy
 function expectO1(name) {
@@ -1661,11 +1710,31 @@ ${lines.join('\n')}`;
     // FIX 판정 상품 대상 (OK는 스킵)
     // v10.2: 기본은 OK 상품까지 포함 (내용 검증 목적). 기존 동작 원하면 HS_AUDIT_CONFIG.llm_fix_only = true
     const fixOnly = (CFG && CFG.llm_fix_only === true);
-    const targets = fixOnly
+    const allTargets = fixOnly
       ? RESULT.items.filter(it => it.judge && it.judge !== 'OK')
       : RESULT.items.filter(it => it.judge);
-    if (!targets.length) { addLog('LLM 판정 대상 없음', 'warn'); return; }
-    addLog(`🎯 LLM 판정 대상 ${targets.length}건 (OK ${fixOnly?'제외':'포함'})`, 'sys');
+    if (!allTargets.length) { addLog('LLM 판정 대상 없음', 'warn'); return; }
+
+    // ==================== v11.1 규칙 기반 사전 처리 ====================
+    // 키워드 매칭 강함(p≥5) + 매트릭스 적합(A/B) → 규칙만으로 해결 · LLM 스킵
+    // 약함(p<5) 또는 매트릭스 부적합(C) → LLM 필요
+    const kwSkipEnabled = (CFG && CFG.llm_kw_skip !== false);  // 기본 true
+    let ruleResolvedCnt = 0;
+    const targets = [];
+    for (const it of allTargets) {
+      if (kwSkipEnabled && ruleBasedResolve(it)) {
+        ruleResolvedCnt++;
+      } else {
+        targets.push(it);
+      }
+    }
+    addLog(`📊 규칙 기반 자동 판정: ${ruleResolvedCnt}건 (LLM 스킵) · LLM 필요: ${targets.length}건`, 'ok');
+    if (!targets.length) {
+      addLog(`✅ 모든 FIX 항목을 규칙만으로 해결 — LLM 호출 불필요 (비용 절감)`, 'ok');
+      $('ha-llm-status').textContent = `규칙기반 ${ruleResolvedCnt}건 완료 · LLM 불필요`;
+      return;
+    }
+    addLog(`🎯 LLM 판정 대상 ${targets.length}건 (OK ${fixOnly?'제외':'포함'}, 규칙 해결 ${ruleResolvedCnt}건 제외)`, 'sys');
 
     $('ha-llm-run').disabled = true;
     $('ha-llm-run').textContent = 'LLM 판정 중...';
