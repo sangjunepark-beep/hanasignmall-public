@@ -589,7 +589,7 @@ const MATCHING_RULES = {
     {c:{o1:"05",o2:"05-06"},k:["배너","X배너","실사 배너"],p:5},
     {c:{o1:"05"},k:["현수막"],p:1},
     // 07 구조물
-    {c:{o1:"07",o2:"07-04"},k:["구조물 간판","대형 간판","설치 구조물"],p:5},
+    {c:{o1:"07",o2:"07-04"},k:["구조물 간판","대형 간판","설치 구조물","지주간판","지주 간판","옥외 간판"],p:5},
     // 08 도로안전
     {c:{o1:"08",o2:"08-01"},k:["차선규제봉","규제봉"],p:5},
     {c:{o1:"08",o2:"08-02"},k:["카스토퍼","주차스토퍼","스톱바"],p:5},
@@ -834,6 +834,21 @@ function judge(r) {
   if (ghosts.length > 0) {
     r._ghost_cats = ghosts;
     issues.add('GHOST');  // 유령 코드 연결 감지 (검토 필요)
+  }
+
+  // === 1-c. v11.0.14: "1차만 있고 2차 없는" 미완성 등록 감지 ===
+  // 예: 07 구조물만, 07-04 같은 2차가 하나도 없는 상태
+  // 각 1차별로 "해당 1차의 2차가 하나라도 있는지" 체크
+  for (const c1 of new Set([...oSet].map(o => o.split('-')[0]))) {
+    if (!c1 || GHOST_CATO_CODES.has(c1)) continue;
+    // 해당 1차의 2차가 oSet에 하나라도 있는지
+    const hasChild = [...oSet].some(o => o !== c1 && o.startsWith(c1 + '-'));
+    if (!hasChild && MATCHING_RULES.default_catT[c1] !== undefined) {
+      // 13(개인결제), 60(기획전) 같은 건 skip_catO에 있음
+      issues.add('O2');  // 2차 부족 → FIX_O로 이어짐
+      r._needs_o2 = r._needs_o2 || [];
+      r._needs_o2.push(c1);
+    }
   }
 
   // === 2. catT 체크 ===
