@@ -1405,21 +1405,24 @@ async function main(){
           const c_name   = styleCell(r.name,   {wrap:true});
           const c_rgr    = styleCell(r.rgr,    {font:'Consolas', align:'center'});
 
-          // 상품별(O)
+          // 상품별(O) (v11.0.12: 제안 셀에 wrap:true 추가 — 줄바꿈이 화면에 제대로 보이도록)
           const c_oCurr  = styleCell(r.oDetail || (r.productType||'-'),
-                                     (prop.oProp!=='변경없음') ? CURR_STYLE_BAD : CURR_STYLE_OK);
-          const c_oProp  = styleCell(prop.oProp, prop.oProp==='변경없음' ? PROP_STYLE_NONE : PROP_STYLE_FIX);
+                                     {wrap:true, ...((prop.oProp!=='변경없음') ? CURR_STYLE_BAD : CURR_STYLE_OK)});
+          const c_oProp  = styleCell(prop.oProp,
+                                     {wrap:true, ...(prop.oProp==='변경없음' ? PROP_STYLE_NONE : PROP_STYLE_FIX)});
 
           // 업종 (T)
           const c_tCount = styleCell(r.tCount,
                                      (prop.tProp!=='변경없음') ? CURR_STYLE_BAD : CURR_STYLE_OK);
           const c_tCurr  = styleCell(prop.tCurrent, {wrap:true, ...((prop.tProp!=='변경없음') ? CURR_STYLE_BAD : CURR_STYLE_OK)});
-          const c_tProp  = styleCell(prop.tProp, prop.tProp==='변경없음' ? PROP_STYLE_NONE : PROP_STYLE_FIX);
+          const c_tProp  = styleCell(prop.tProp,
+                                     {wrap:true, ...(prop.tProp==='변경없음' ? PROP_STYLE_NONE : PROP_STYLE_FIX)});
 
           // 공간 (SelMemCat)
           const c_spCount = styleCell(r.spaceCount, {align:'center'});
           const c_spCurr  = styleCell(r.spaceLabels, {wrap:true});  // v11.0.5: 모든 상품에 표시
-          const c_cbProp  = styleCell(prop.cbProp, prop.cbProp==='변경없음' ? PROP_STYLE_NONE : PROP_STYLE_FIX);
+          const c_cbProp  = styleCell(prop.cbProp,
+                                     {wrap:true, ...(prop.cbProp==='변경없음' ? PROP_STYLE_NONE : PROP_STYLE_FIX)});
 
           // 이유 (v11.0.5: 별도 컬럼)
           const c_reason  = styleCell(prop.reason || '-', {wrap:true, fontSize:10, fontColor:'666666'});
