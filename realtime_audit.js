@@ -1259,13 +1259,34 @@ async function main(){
       else tProp = '변경없음';
     }
 
-    // === catO 상품별 제안 ===
-    if (llmO3) {
-      oProp = labelO(llmO3);  // 예: "02-04 유도안내"
-    } else if (hasO) {
-      const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
-      oProp = m ? labelO(m[1]) : '(LLM 판정 필요)';
+    // === catO 상품별 제안 (v11.0.10: 중복 제안 제거 + 유령 권고) ===
+    // 현재 catO 코드 집합
+    const curOCodes = new Set(r.oCodes || []);
+    const oProps = [];
+
+    // 1. 유령 코드 해제 권고 (최우선)
+    const ghostList = (curOCodes ? Array.from(curOCodes) : []).filter(c => GHOST_CATO_CODES.has(c));
+    if (ghostList.length) {
+      oProps.push('⚠ 해제 권고: ' + ghostList.join(', ') + ' (어드민 트리 삭제됨)');
     }
+
+    // 2. 멀티 1차 경고
+    if (r.multiO1 && r.multiO1.length > 1) {
+      oProps.push('⚠ 1차 중복: ' + r.multiO1.map(c => O1_MAP[c] || c).join(' + '));
+    }
+
+    // 3. LLM 제안 — 이미 있는 것은 제외, 진짜 추가할 것만
+    if (llmO3 && !curOCodes.has(llmO3)) {
+      // O3가 아직 없고, 2차 prefix도 맞는지 확인
+      oProps.push('추가: ' + labelO(llmO3));
+    } else if (hasO && !ghostList.length) {
+      const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
+      if (m && !curOCodes.has(m[1])) {
+        oProps.push('추가: ' + labelO(m[1]));
+      }
+    }
+
+    oProp = oProps.length ? oProps.join('\n') : '변경없음';
 
     // === 관심분야 공간 제안 ===
     const cbLines = [];
