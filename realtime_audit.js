@@ -1131,11 +1131,15 @@ async function main(){
   function toDisplayRow(r, i) {
     const j = JUDGE_KR[r.judge] || JUDGE_KR.OK;
     const oCodes = (r.o||'').split(',').filter(x=>x);
-    // 상품별 1차 라벨
-    const o1 = (oCodes[0]||'').split('-')[0];
-    const productType = O1_MAP[o1] || '-';
-    // 상품별 세부 (2차/3차) · 코드 + 명칭
-    const oDetail = oCodes.slice(1).map(labelO).join(' · ') || '-';
+    // v11.0.9: 1차 catO를 모두 추출 (멀티 1차 등록 감지용)
+    const cat1Set = new Set(oCodes.map(o => o.split('-')[0]).filter(x=>x));
+    const cat1List = Array.from(cat1Set);
+    const productType = cat1List.map(c => O1_MAP[c] || c).join(' + ') || '-';
+    // v11.0.9 버그 수정: 기존 slice(1) 하면 첫 1차가 아예 안 보임
+    // 전체 oCodes 표시 (1차·2차·3차 모두)
+    const oDetail = oCodes.map(labelO).join(' · ') || '-';
+    // 멀티 1차 등록 경고 플래그
+    const multiO1 = cat1List.length > 1 ? cat1List : null;
     // 업종
     const tCodes = (r.t||'').split(',').filter(x=>x);
     const tLabels = tCodes.map(c => T1_MAP[c] || c).join(', ');
@@ -1157,6 +1161,7 @@ async function main(){
       rgr: r.rgr,
       productType,
       oDetail,
+      multiO1,  // v11.0.9: 멀티 1차 등록 시 1차 목록, 아니면 null
       tCount,
       tLabels: tLabels || '(미연결)',
       tCodes,  // v11.0.3: buildProposal 참조용 (원본 r.t 잃지 않게)
