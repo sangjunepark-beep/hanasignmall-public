@@ -665,6 +665,9 @@ const MATCHING_RULES = {
     {m:["공사","작업장"],a:["05-01","07-06"]},
   ],
   fitness: {"01":{"01":"A","02":"B","03":"A","04":"B","05":"A","06":"A","07":"A","08":"B","09":"A"},"02":{"01":"A","02":"A","03":"A","04":"A","05":"A","06":"A","07":"A","08":"A","09":"A"},"04":{"01":"B","02":"A","03":"A","04":"A","05":"B","06":"A","07":"A","08":"A","09":"A"},"05":{"01":"A","02":"B","03":"A","04":"B","05":"B","06":"A","07":"A","08":"B","09":"A"},"07":{"01":"C","02":"C","03":"B","04":"C","05":"C","06":"A","07":"A","08":"C","09":"B"},"08":{"01":"B","02":"C","03":"A","04":"B","05":"C","06":"A","07":"A","08":"C","09":"A"},"09":{"01":"A","02":"B","03":"A","04":"B","05":"A","06":"A","07":"A","08":"B","09":"A"},"10":{"01":"A","02":"A","03":"A","04":"A","05":"A","06":"A","07":"A","08":"A","09":"A"}},
+  // v11.0.15: 1차의 2차가 유일한 경우 자동 추가 (LLM 개입 없이 규칙 적용)
+  // 07 구조물은 2차가 07-04 하나뿐이므로 07 등록된 상품엔 07-04 자동 매핑
+  forced_sub: {"07":"07-04"},
   skip_catO: ["13","60"]
 };
 
@@ -1312,6 +1315,17 @@ async function main(){
     } else if (hasO && !removeList.length) {
       const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
       if (m && !curOCodes.has(m[1])) addList.push(labelO(m[1]));
+    }
+
+    // 3-b. v11.0.15: 1차의 유일 2차 자동 제안 (07 → 07-04)
+    if (r._needs_o2) {
+      for (const c1 of r._needs_o2) {
+        const forced = (MATCHING_RULES.forced_sub || {})[c1];
+        if (forced && !curOCodes.has(forced)) {
+          const label = labelO(forced);
+          if (!addList.includes(label)) addList.push(label);
+        }
+      }
     }
 
     // 4. 조립 — 평서문 (v11.0.13)
@@ -2542,8 +2556,24 @@ async function fixOne(item) {
       src = 'llm_o3';
     }
 
+    // v11.0.15: targetCatO 없어도 _needs_o2 있으면 forced_sub만 추가 실행
     if (!targetCatO || !targetCatO.o1) {
-      results.push('O변경불필요(매칭없음)');
+      const currentOs = (item.o||'').split(',').filter(x=>x);
+      const forcedAdds = [];
+      if (item._needs_o2) {
+        for (const c1 of item._needs_o2) {
+          const forced = (MATCHING_RULES.forced_sub || {})[c1];
+          if (forced && !currentOs.includes(forced)) forcedAdds.push(forced);
+        }
+      }
+      if (forcedAdds.length) {
+        for (const code of forcedAdds) {
+          const ar = await hsApiCateAdd(rowid, item.rgr, code, '1', 0);
+          results.push(ar.ok ? `O+${code}` : `O실패(${code})`);
+        }
+      } else {
+        results.push('O변경불필요(매칭없음)');
+      }
     } else {
       const currentOs = (item.o||'').split(',').filter(x=>x);
       // v11.0.7: 멀티 catO 1차 지원 (첫번째만 보던 버그 수정)
@@ -2555,6 +2585,15 @@ async function fixOne(item) {
       if (targetCatO.o1 && !currentOs.includes(targetCatO.o1)) toAdd.push(targetCatO.o1);
       if (targetCatO.o2 && !currentOs.includes(targetCatO.o2)) toAdd.push(targetCatO.o2);
       if (targetCatO.o3 && !currentOs.includes(targetCatO.o3)) toAdd.push(targetCatO.o3);
+      // v11.0.15: _needs_o2 플래그에 기반한 forced_sub 추가
+      if (item._needs_o2) {
+        for (const c1 of item._needs_o2) {
+          const forced = (MATCHING_RULES.forced_sub || {})[c1];
+          if (forced && !currentOs.includes(forced) && !toAdd.includes(forced)) {
+            toAdd.push(forced);
+          }
+        }
+      }
 
       // 1차 불일치 (현재 어떤 catO도 해당 1차에 없음) → 경고 로그만
       if (!currentCat1s.has(expectCat1)) {
