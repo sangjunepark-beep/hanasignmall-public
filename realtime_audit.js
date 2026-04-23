@@ -1255,17 +1255,17 @@ async function main(){
       reason = cleaned;
     }
 
-    // === catT 업종 제안 (v11.0.11: 평범한 말투) ===
+    // === catT 업종 제안 (v11.0.13: 평서문) ===
     if (hasLLM && (tAdd.length || tRm.length)) {
       const parts = [];
-      if (tAdd.length) parts.push(`추가하세요: ${tAdd.map(c=>T1_MAP[c]||c).join(', ')}`);
-      if (tRm.length)  parts.push(`빼주세요: ${tRm.map(c=>T1_MAP[c]||c).join(', ')}`);
+      if (tAdd.length) parts.push(`추가합니다: ${tAdd.map(c=>T1_MAP[c]||c).join(', ')}`);
+      if (tRm.length)  parts.push(`뺍니다: ${tRm.map(c=>T1_MAP[c]||c).join(', ')}`);
       tProp = parts.join('\n');
     } else if (hasT) {
       const allT = ['01','02','03','04','05','06','07','08','09'];
       const missing = allT.filter(c => !tCodes.includes(c));
-      if (missing.length === 9) tProp = '9개 업종 모두 연결해주세요';
-      else if (missing.length) tProp = `추가하세요: ${missing.map(c=>T1_MAP[c]).join(', ')}`;
+      if (missing.length === 9) tProp = '9개 업종 모두 연결이 필요합니다';
+      else if (missing.length) tProp = `추가합니다: ${missing.map(c=>T1_MAP[c]).join(', ')}`;
       else tProp = '변경없음';
     }
 
@@ -1299,37 +1299,37 @@ async function main(){
       if (m && !curOCodes.has(m[1])) addList.push(labelO(m[1]));
     }
 
-    // 4. 조립 — 평범한 말투
+    // 4. 조립 — 평서문 (v11.0.13)
     const oLines = [];
-    if (keepList.length) oLines.push(`그대로 두세요: ${keepList.join(', ')}`);
-    if (removeList.length) oLines.push(`빼주세요: ${removeList.join(', ')}`);
-    if (addList.length) oLines.push(`추가하세요: ${addList.join(', ')}`);
+    if (keepList.length) oLines.push(`그대로 둡니다: ${keepList.join(', ')}`);
+    if (removeList.length) oLines.push(`뺍니다: ${removeList.join(', ')}`);
+    if (addList.length) oLines.push(`추가합니다: ${addList.join(', ')}`);
     if (notes.length) oLines.push(`※ ${notes.join(' / ')}`);
     oProp = oLines.length ? oLines.join('\n') : '변경없음';
 
-    // === 관심분야 공간 제안 (v11.0.11: 평범한 말투) ===
+    // === 관심분야 공간 제안 (v11.0.13: 평서문) ===
     const cbLines = [];
     if (memAdd.length) {
       const names = memAdd.slice(0, 5).map(c => (SPACE_MAP[c] || c));
       const more = memAdd.length > 5 ? ` 외 ${memAdd.length-5}곳` : '';
-      cbLines.push(`공간 ${memAdd.length}곳 추가하세요: ${names.join(', ')}${more}`);
+      cbLines.push(`공간 ${memAdd.length}곳 추가합니다: ${names.join(', ')}${more}`);
     }
     if (memRm.length) {
       const names = memRm.slice(0, 5).map(c => (SPACE_MAP[c] || c));
       const more = memRm.length > 5 ? ` 외 ${memRm.length-5}곳` : '';
-      cbLines.push(`공간 ${memRm.length}곳 빼주세요: ${names.join(', ')}${more}`);
+      cbLines.push(`공간 ${memRm.length}곳 뺍니다: ${names.join(', ')}${more}`);
     }
     const t2AddCnt = Object.values(t2Add).reduce((a,b)=>a+(b||[]).length, 0);
     const t2RmCnt  = Object.values(t2Rm).reduce((a,b)=>a+(b||[]).length, 0);
-    if (t2AddCnt) cbLines.push(`업종별 세부공간 ${t2AddCnt}개 추가하세요`);
-    if (t2RmCnt)  cbLines.push(`업종별 세부공간 ${t2RmCnt}개 빼주세요`);
+    if (t2AddCnt) cbLines.push(`업종별 세부공간 ${t2AddCnt}개 추가합니다`);
+    if (t2RmCnt)  cbLines.push(`업종별 세부공간 ${t2RmCnt}개 뺍니다`);
 
     if (cbLines.length) {
       cbProp = cbLines.join('\n');
     } else if (hasLLM) {
       cbProp = '변경없음';
     } else if (hasCB) {
-      cbProp = 'AI 판정 필요 (LLM 버튼 누르세요)';
+      cbProp = 'AI 판정이 필요합니다';
     }
 
     return {oProp, tProp, cbProp, tCurrent, reason, isRule};
