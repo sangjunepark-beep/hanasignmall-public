@@ -2415,25 +2415,23 @@ async function fixOne(item) {
     }
   }
 
-  // ============ v11 FIX_O: 키워드 우선 catO 재분류/추가 ============
-  // 정책:
-  //  1) 키워드 매칭 priority >= 5: 자동 재분류 허용 (1차까지 바꿈)
-  //  2) 키워드 매칭 없음 → LLM 지시(llm_catO) 사용, 단 priority mid 이하는 승인 대기
-  //  3) 1차 일치 시: 2/3차만 추가
-  //  4) 1차 불일치 시: 기존 전체 해제 후 새로 등록 (catO 재분류)
+  // ============ v11.0.7 FIX_O: "기존 catO 보호" 원칙 ============
+  // 핵심 변경:
+  //  - 멀티 catO 1차 지원: currentOs 전체를 Set으로 검사 (첫번째만 보던 버그 수정)
+  //  - "기존 catO 전체 해제" 로직 전면 제거
+  //  - 기본 동작: "제안 catO를 추가"만 실행 (catT/공간과 동일 원칙)
+  //  - 재분류 필요 시에도 기존 catO 유지 + 새 catO 추가만
+  //  - 실제 "기존 catO 해제"는 사람이 어드민에서 수동으로 (안전)
   if (isO) {
-    // 우선순위 1: 키워드 매칭 결과
     let targetCatO = null;
     let src = '';
     if (item._kw_catO && item._kw_catO.p >= 5) {
       targetCatO = item._kw_catO.c;
       src = `kw:${item._kw_catO.kw}(p${item._kw_catO.p})`;
     } else if (item.llm_catO && Object.keys(item.llm_catO).length) {
-      // LLM 지시 사용 (priority 낮은 키워드도 LLM이 보정)
       targetCatO = item.llm_catO;
       src = 'llm';
     } else if (item.llm_o3) {
-      // 하위 호환: llm_o3에서 역산
       const o3 = item.llm_o3;
       targetCatO = {
         o1: o3.split('-')[0],
@@ -2447,42 +2445,28 @@ async function fixOne(item) {
       results.push('O변경불필요(매칭없음)');
     } else {
       const currentOs = (item.o||'').split(',').filter(x=>x);
-      const currentCat1 = (currentOs[0]||'').split('-')[0];
+      // v11.0.7: 멀티 catO 1차 지원 (첫번째만 보던 버그 수정)
+      const currentCat1s = new Set(currentOs.map(o => o.split('-')[0]));
       const expectCat1 = targetCatO.o1;
 
-      if (currentCat1 && expectCat1 && currentCat1 !== expectCat1) {
-        // ===== catO 재분류 (v11 신규) =====
-        // 안전장치: 이 분기는 이미 priority>=5 또는 LLM 지시여야 도달
-        addLog(`🔀 catO 재분류: ${item.rgr} ${currentCat1}→${expectCat1} (${src})`, 'warn');
-        // 기존 catO 전체 해제
-        let delOk = 0, delFail = 0;
-        for (const oldO of currentOs) {
-          const dr = await hsApiCateDel(rowid, item.rgr, oldO, '1');
-          if (dr.ok) delOk++; else delFail++;
-        }
-        results.push(`O해제:${delOk}/${currentOs.length}`);
-        if (delFail > 0) {
-          results.push(`⚠ 일부 삭제실패(${delFail})`);
-        }
-        // 새 catO 등록 (1차 → 2차 → 3차 순서)
-        const addList = [targetCatO.o1, targetCatO.o2, targetCatO.o3].filter(x=>x);
-        for (const code of addList) {
+      // 추가 후보: o1/o2/o3 중 아직 없는 것만
+      const toAdd = [];
+      if (targetCatO.o1 && !currentOs.includes(targetCatO.o1)) toAdd.push(targetCatO.o1);
+      if (targetCatO.o2 && !currentOs.includes(targetCatO.o2)) toAdd.push(targetCatO.o2);
+      if (targetCatO.o3 && !currentOs.includes(targetCatO.o3)) toAdd.push(targetCatO.o3);
+
+      // 1차 불일치 (현재 어떤 catO도 해당 1차에 없음) → 경고 로그만
+      if (!currentCat1s.has(expectCat1)) {
+        addLog(`ℹ catO 1차 추가 제안: ${item.rgr} [${Array.from(currentCat1s).join(',')}] + ${expectCat1} (${src}) — 기존 유지 · 추가만 실행`, 'info');
+      }
+
+      if (!toAdd.length) {
+        results.push('O변경불필요(이미일치)');
+      } else {
+        // 추가만 실행 (기존 catO 절대 해제하지 않음)
+        for (const code of toAdd) {
           const ar = await hsApiCateAdd(rowid, item.rgr, code, '1', 0);
           results.push(ar.ok ? `O+${code}` : `O실패(${code})`);
-        }
-        results.push(`재분류완료(${src})`);
-      } else {
-        // ===== 1차 일치: 2/3차만 추가 =====
-        const toAdd = [];
-        if (targetCatO.o2 && !currentOs.includes(targetCatO.o2)) toAdd.push(targetCatO.o2);
-        if (targetCatO.o3 && !currentOs.includes(targetCatO.o3)) toAdd.push(targetCatO.o3);
-        if (!toAdd.length) {
-          results.push('O변경불필요(이미일치)');
-        } else {
-          for (const code of toAdd) {
-            const ar = await hsApiCateAdd(rowid, item.rgr, code, '1', 0);
-            results.push(ar.ok ? `O+${code}` : `O실패(${code})`);
-          }
         }
       }
     }
