@@ -730,6 +730,16 @@ function matrixFit(o1, t) {
   return (MATCHING_RULES.fitness[o1] || {})[t] || 'B';
 }
 
+// v11.0.8: 유령 catO 코드 (어드민 트리에서 삭제됐지만 상품에 남아있는 레거시)
+// 2026-04-23 어드민 재덤프로 확인: 07-01, 07-02, 07-03은 현재 트리에 없음
+// catO 자리에 12가 있는 건 catT 코드 오입력 (12는 원래 개인결제창 catT)
+const GHOST_CATO_CODES = new Set(['07-01', '07-02', '07-03', '12']);
+
+// 상품의 catO 리스트에서 유령 코드만 추출
+function findGhostCats(oStr) {
+  return (oStr||'').split(',').filter(x => GHOST_CATO_CODES.has(x));
+}
+
 // ==================== v11.1 규칙 기반 자동 판정 (LLM 전 단계) ====================
 // 키워드 매칭 강하고 매트릭스 적합이면 LLM 없이 규칙만으로 add/remove 지시 생성
 // 반환값 true = 해결 완료 (LLM 불필요) · false = LLM 필요
@@ -819,6 +829,13 @@ function judge(r) {
     r._kw_catO = null;
   }
 
+  // === 1-b. v11.0.8: 유령 catO 코드 감지 (어드민 트리에서 삭제된 레거시) ===
+  const ghosts = findGhostCats(r.o);
+  if (ghosts.length > 0) {
+    r._ghost_cats = ghosts;
+    issues.add('GHOST');  // 유령 코드 연결 감지 (검토 필요)
+  }
+
   // === 2. catT 체크 ===
   const kwT = kwMatchCatT(name);
   const expT = kwT.size ? kwT : defaultCatT(kwO ? kwO.c.o1 : (curO1 || '09'));
@@ -844,6 +861,9 @@ function judge(r) {
   // === 5. 판정 코드 ===
   if (!issues.size) return 'OK';
   const hasO = issues.has('O1_RECLASS') || issues.has('O2') || issues.has('O3');
+  const hasGhost = issues.has('GHOST');
+  // v11.0.8: 유령 코드 단독이면 FIX_GHOST (자동수정 대상 아님, 사람 검수 필요)
+  if (issues.size === 1 && hasGhost) return 'FIX_GHOST';
   if (issues.size === 1) {
     if (hasO) return 'FIX_O';
     if (issues.has('T')) return 'FIX_T';
@@ -991,6 +1011,14 @@ async function main(){
   const O1_MAP = {'01':'게시판','02':'안내판','04':'입간판','05':'현수막/배너','07':'구조물','08':'도로안전용품','09':'각종물품','10':'인쇄물/스티커','13':'개인결제','60':'기획전'};
   const T1_MAP = {'01':'학교/학원','02':'식당/카페','03':'아파트','04':'호텔/펜션','05':'병원/요양시설','06':'회사/공장','07':'공공기관','08':'헬스/레저','09':'기타업종','12':'개인결제창'};
   // O2 매핑 (1차-2차 조합)
+  // v11.0.8: 유령 코드(어드민 트리에서 삭제됐지만 상품에 남아있는 레거시) 표시
+  // ⚠ 접두어는 "현재 트리에 없음 = 어드민 편집 시 재선택 불가"를 뜻함
+  const GHOST_CAT = {
+    '07-01': '⚠[유령] 금속표지판/싸인몰(간판)',
+    '07-02': '⚠[유령] 금속표지판/놀이터수칙',
+    '07-03': '⚠[유령] 구조물/시공건',
+    '12':    '⚠[유령] 12코드(catT 오입력)',
+  };
   // v11.0.4: hs_full_tree.json 기준 실제 카테고리명으로 교체 (기존은 임의로 만든 이름)
   const O2_MAP = {
     // 01 게시판
@@ -1068,25 +1096,35 @@ async function main(){
     '08-04':'영화관/공연장/놀이공원','08-05':'서점/문고'
   };
 
-  // 코드 → "코드 명칭" 형태 변환
+  // 코드 → "코드 명칭" 형태 변환 (v11.0.8: 유령 코드 표시)
   function labelO(code) {
     if (!code) return '';
+    if (GHOST_CAT[code]) return `${code} ${GHOST_CAT[code]}`;  // 유령 코드 우선
     if (O3_MAP[code])  return `${code} ${O3_MAP[code]}`;
     if (O2_MAP[code])  return `${code} ${O2_MAP[code]}`;
     if (O1_MAP[code])  return `${code} ${O1_MAP[code]}`;
-    return code;
+    // 알 수 없는 코드 = 추정 유령
+    return `${code} ⚠[정체불명]`;
+  }
+  // v11.0.8: 유령 코드 감지 헬퍼
+  function isGhostCode(code) {
+    if (!code) return false;
+    if (GHOST_CAT[code]) return true;
+    // 어떤 MAP에도 없으면 유령
+    return !O3_MAP[code] && !O2_MAP[code] && !O1_MAP[code];
   }
   function labelSpace(code) {
     return SPACE_MAP[code] ? `${code} ${SPACE_MAP[code]}` : code;
   }
-  // v11.0.2: 라벨을 실제 판정 로직과 일치시킴 (기존 v10 라벨은 오해 유발)
+  // v11.0.8: 유령 코드 판정 추가
   const JUDGE_KR = {
-    'OK':        {s:'정상',         d:'3차원 모두 정상',                     f:'-',                            p:0},
-    'FIX_T':     {s:'업종 부족',     d:'업종 연결 부족 (키워드 기준 누락)',    f:'키워드 매칭 업종 추가',         p:3},
-    'FIX_O':     {s:'카테고리 부족',  d:'상품별 2/3차 부족 또는 1차 재분류 필요', f:'키워드 매칭 카테고리 교체',   p:2},
-    'FIX_CB':    {s:'관심분야 미연결', d:'SelMemCat 공간 체크 없음',           f:'관심분야 공간 추가',            p:1},
-    'FIX_MULTI': {s:'복합 문제',      d:'2개 이상 차원에 문제',                f:'개별 확인 후 수정',             p:4},
-    'FIX_ALL':   {s:'전체 미설정',    d:'상품별+업종별+관심분야 모두 미설정',    f:'처음부터 재설정',               p:5},
+    'OK':         {s:'정상',           d:'3차원 모두 정상',                     f:'-',                            p:0},
+    'FIX_T':      {s:'업종 부족',       d:'업종 연결 부족 (키워드 기준 누락)',    f:'키워드 매칭 업종 추가',         p:3},
+    'FIX_O':      {s:'카테고리 부족',    d:'상품별 2/3차 부족 또는 1차 재분류 필요', f:'키워드 매칭 카테고리 교체',   p:2},
+    'FIX_CB':     {s:'관심분야 미연결',  d:'SelMemCat 공간 체크 없음',           f:'관심분야 공간 추가',            p:1},
+    'FIX_GHOST':  {s:'⚠ 유령 코드',     d:'어드민 트리에서 삭제된 레거시 카테고리 연결', f:'수동 검수 필요 (자동해제 금지)', p:3},
+    'FIX_MULTI':  {s:'복합 문제',       d:'2개 이상 차원에 문제',                f:'개별 확인 후 수정',             p:4},
+    'FIX_ALL':    {s:'전체 미설정',     d:'상품별+업종별+관심분야 모두 미설정',    f:'처음부터 재설정',               p:5},
   };
 
   // 각 item을 표시용 행으로 변환
@@ -1253,12 +1291,13 @@ async function main(){
     return {oProp, tProp, cbProp, tCurrent, reason, isRule};
   }
 
-  // 스타일 헬퍼 (v11.0.2: 새 라벨에 맞게 스타일 매핑 갱신)
+  // 스타일 헬퍼 (v11.0.8: 유령 코드 자주색으로 눈에 띄게)
   const STATUS_STYLE = {
     '정상':            {fill:'C6EFCE', font:'006100'},
     '업종 부족':        {fill:'FFC7CE', font:'9C0006'},
     '카테고리 부족':    {fill:'FFD580', font:'9C5700'},
     '관심분야 미연결':  {fill:'FFEB9C', font:'9C5700'},
+    '⚠ 유령 코드':     {fill:'E6B8F7', font:'5E2E7D'},   // 자주색 (구분)
     '복합 문제':        {fill:'F8CBAD', font:'9C0006'},
     '전체 미설정':      {fill:'F8CBAD', font:'9C0006'},
     // 하위호환 (옛 라벨 잔존 대비)
