@@ -1231,87 +1231,105 @@ async function main(){
     const hasLLM = !!(orig && orig.llm_reason);
     const isRule = orig && orig.llm_source === 'rule';
 
-    // 이유 텍스트 정제 (v11.0.5: 디버그 메시지 'v11 규칙(kw:...)' 제거)
+    // 이유 텍스트 정제 (v11.0.11: 기술용어를 평범한 말로 치환)
     if (llmReason) {
       let cleaned = llmReason;
-      // "v11 규칙(kw:... · 업종:... · 공간 ...개 add)" 형태는 숨김
       if (/^v11 규칙\(/.test(cleaned)) {
-        cleaned = '키워드 매칭 자동 판정';
+        cleaned = '상품명 키워드로 자동 분류됨';
       } else {
-        // LLM 이유 중 앞 100자만
+        // 기술 용어 → 평범한 말
+        cleaned = cleaned
+          .replace(/SelMemCat\s*[=]?\s*/g, '공간 ')
+          .replace(/SelOptCat2\s*[=]?\s*/g, '업종×공간 ')
+          .replace(/catO[1-3]?/gi, '카테고리')
+          .replace(/catT[1-3]?/gi, '업종')
+          .replace(/t5_cc|t5\s*=/g, '공간체크 ')
+          .replace(/규칙\s*\d+\s*\([^\)]*\)\s*[.·,]?\s*/g, '')  // 규칙1(...) 제거
+          .replace(/규칙\s*\d+\s*[.·,]?\s*/g, '')                // 규칙1 제거
+          .replace(/★+/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
         cleaned = cleaned.slice(0, 100).replace(/\n/g, ' ');
         if (llmReason.length > 100) cleaned += '...';
       }
       reason = cleaned;
     }
 
-    // === catT 업종 제안 ===
+    // === catT 업종 제안 (v11.0.11: 평범한 말투) ===
     if (hasLLM && (tAdd.length || tRm.length)) {
       const parts = [];
-      if (tAdd.length) parts.push('추가 ' + tAdd.map(c=>T1_MAP[c]||c).join(', '));
-      if (tRm.length)  parts.push('해제 ' + tRm.map(c=>T1_MAP[c]||c).join(', '));
-      tProp = parts.join(' / ');
+      if (tAdd.length) parts.push(`추가하세요: ${tAdd.map(c=>T1_MAP[c]||c).join(', ')}`);
+      if (tRm.length)  parts.push(`빼주세요: ${tRm.map(c=>T1_MAP[c]||c).join(', ')}`);
+      tProp = parts.join('\n');
     } else if (hasT) {
       const allT = ['01','02','03','04','05','06','07','08','09'];
       const missing = allT.filter(c => !tCodes.includes(c));
-      if (missing.length === 9) tProp = '9업종 모두 연결 필요';
-      else if (missing.length) tProp = `${missing.length}개 추가: ` + missing.map(c=>T1_MAP[c]).join(', ');
+      if (missing.length === 9) tProp = '9개 업종 모두 연결해주세요';
+      else if (missing.length) tProp = `추가하세요: ${missing.map(c=>T1_MAP[c]).join(', ')}`;
       else tProp = '변경없음';
     }
 
-    // === catO 상품별 제안 (v11.0.10: 중복 제안 제거 + 유령 권고) ===
-    // 현재 catO 코드 집합
+    // === catO 상품별 제안 (v11.0.11: 평범한 말투 + 그대로 두기 섹션) ===
     const curOCodes = new Set(r.oCodes || []);
-    const oProps = [];
+    const keepList = [];    // 그대로 둘 카테고리
+    const removeList = [];  // 빼야 할 카테고리 (유령)
+    const addList = [];     // 추가할 카테고리
+    const notes = [];       // 참고 사항
 
-    // 1. 유령 코드 해제 권고 (최우선)
-    const ghostList = (curOCodes ? Array.from(curOCodes) : []).filter(c => GHOST_CATO_CODES.has(c));
-    if (ghostList.length) {
-      oProps.push('⚠ 해제 권고: ' + ghostList.join(', ') + ' (어드민 트리 삭제됨)');
-    }
-
-    // 2. 멀티 1차 경고
-    if (r.multiO1 && r.multiO1.length > 1) {
-      oProps.push('⚠ 1차 중복: ' + r.multiO1.map(c => O1_MAP[c] || c).join(' + '));
-    }
-
-    // 3. LLM 제안 — 이미 있는 것은 제외, 진짜 추가할 것만
-    if (llmO3 && !curOCodes.has(llmO3)) {
-      // O3가 아직 없고, 2차 prefix도 맞는지 확인
-      oProps.push('추가: ' + labelO(llmO3));
-    } else if (hasO && !ghostList.length) {
-      const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
-      if (m && !curOCodes.has(m[1])) {
-        oProps.push('추가: ' + labelO(m[1]));
+    // 1. 현재 catO 분류 (유령 / 정상)
+    for (const c of (r.oCodes || [])) {
+      if (GHOST_CATO_CODES.has(c)) {
+        removeList.push(`${c} (어드민에서 없어진 옛 코드)`);
+      } else {
+        keepList.push(labelO(c));
       }
     }
 
-    oProp = oProps.length ? oProps.join('\n') : '변경없음';
+    // 2. 1차 중복 참고
+    if (r.multiO1 && r.multiO1.length > 1) {
+      const names = r.multiO1.map(c => O1_MAP[c] || c);
+      notes.push(`이 상품은 ${names.join(', ')} — ${names.length}개 카테고리에 같이 들어있습니다`);
+    }
 
-    // === 관심분야 공간 제안 ===
+    // 3. LLM이 진짜 추가할 거 제안 (이미 있는 건 제외)
+    if (llmO3 && !curOCodes.has(llmO3)) {
+      addList.push(labelO(llmO3));
+    } else if (hasO && !removeList.length) {
+      const m = (r.reason||'').match(/O3:(\d{2}-\d{2}-\d{3})/);
+      if (m && !curOCodes.has(m[1])) addList.push(labelO(m[1]));
+    }
+
+    // 4. 조립 — 평범한 말투
+    const oLines = [];
+    if (keepList.length) oLines.push(`그대로 두세요: ${keepList.join(', ')}`);
+    if (removeList.length) oLines.push(`빼주세요: ${removeList.join(', ')}`);
+    if (addList.length) oLines.push(`추가하세요: ${addList.join(', ')}`);
+    if (notes.length) oLines.push(`※ ${notes.join(' / ')}`);
+    oProp = oLines.length ? oLines.join('\n') : '변경없음';
+
+    // === 관심분야 공간 제안 (v11.0.11: 평범한 말투) ===
     const cbLines = [];
     if (memAdd.length) {
-      // 상위 5개 공간 이름으로 표시
       const names = memAdd.slice(0, 5).map(c => (SPACE_MAP[c] || c));
-      const more = memAdd.length > 5 ? ` 외 ${memAdd.length-5}개` : '';
-      cbLines.push(`공간 ${memAdd.length}개 추가: ${names.join(', ')}${more}`);
+      const more = memAdd.length > 5 ? ` 외 ${memAdd.length-5}곳` : '';
+      cbLines.push(`공간 ${memAdd.length}곳 추가하세요: ${names.join(', ')}${more}`);
     }
     if (memRm.length) {
       const names = memRm.slice(0, 5).map(c => (SPACE_MAP[c] || c));
-      const more = memRm.length > 5 ? ` 외 ${memRm.length-5}개` : '';
-      cbLines.push(`공간 ${memRm.length}개 해제: ${names.join(', ')}${more}`);
+      const more = memRm.length > 5 ? ` 외 ${memRm.length-5}곳` : '';
+      cbLines.push(`공간 ${memRm.length}곳 빼주세요: ${names.join(', ')}${more}`);
     }
     const t2AddCnt = Object.values(t2Add).reduce((a,b)=>a+(b||[]).length, 0);
     const t2RmCnt  = Object.values(t2Rm).reduce((a,b)=>a+(b||[]).length, 0);
-    if (t2AddCnt) cbLines.push(`업종×공간 ${t2AddCnt}개 추가`);
-    if (t2RmCnt)  cbLines.push(`업종×공간 ${t2RmCnt}개 해제`);
+    if (t2AddCnt) cbLines.push(`업종별 세부공간 ${t2AddCnt}개 추가하세요`);
+    if (t2RmCnt)  cbLines.push(`업종별 세부공간 ${t2RmCnt}개 빼주세요`);
 
     if (cbLines.length) {
       cbProp = cbLines.join('\n');
     } else if (hasLLM) {
       cbProp = '변경없음';
     } else if (hasCB) {
-      cbProp = `LLM 판정 필요`;
+      cbProp = 'AI 판정 필요 (LLM 버튼 누르세요)';
     }
 
     return {oProp, tProp, cbProp, tCurrent, reason, isRule};
