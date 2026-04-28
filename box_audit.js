@@ -1,9 +1,11 @@
-/* 박스별 검수+자동수정+엑셀 대시보드 v11.0.16.5 (드래그/최소화) */
+/* 박스별 검수 대시보드 v11.0.16.7 (한국어/풀어쓰기) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
 var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',GHOST_ONLY:'#e8daef',ERR:'#fadbd8'};
-var ICO={OK:'OK',PARTIAL:'!',EMPTY:'X',GHOST:'G',GHOST_ONLY:'G',ERR:'E'};
+var KOR_JUDGE={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령박스',GHOST_ONLY:'유령박스만',ERR:'에러'};
+var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',GHOST_ONLY:'👻',ERR:'⚠'};
+var CAT_NAMES={'01':'게시판','02':'안내판','04':'입간판','05':'현수막/배너','07':'구조물','08':'도로안전용품','09':'각종물품','10':'인쇄물/스티커','13':'개인결제'};
 
 function analyzeFull(d){
   var cb=Array.from(d.querySelectorAll('input[type=checkbox]'));
@@ -21,12 +23,12 @@ function analyzeFull(d){
 function summarize(bs,hO){
   return Object.keys(bs).map(function(k){
     var b=bs[k];
-    var d4=b.items.filter(function(x){return x.dim==='04'&&x.checked;}).length;
-    var d5=b.items.filter(function(x){return x.dim==='05'&&x.checked;}).length;
+    var d4=b.items.filter(function(x){return x.dim==='04'&&x.checked;});
+    var d5=b.items.filter(function(x){return x.dim==='05'&&x.checked;});
     var tot=b.items.filter(function(x){return x.checked;}).length;
     var gh=hO.indexOf(b.catO1)<0;
-    var v=gh?'GHOST':((d4>=9&&d5>=1)?'OK':((d4===0&&d5===0)?'EMPTY':'PARTIAL'));
-    return {box:k,catO1:b.catO1,total:tot,d4:d4,d5:d5,ghost:gh,judge:v};
+    var v=gh?'GHOST':((d4.length>=9&&d5.length>=1)?'OK':((d4.length===0&&d5.length===0)?'EMPTY':'PARTIAL'));
+    return {box:k,catO1:b.catO1,catName:CAT_NAMES[b.catO1]||'?',total:tot,d4:d4.length,d5:d5.length,d4items:d4,d5items:d5,ghost:gh,judge:v};
   });
 }
 function rowJ(s){
@@ -56,10 +58,10 @@ function propose(full){
     if(ok&&x.k===ok.k)return;
     stdSubs.forEach(function(sub){
       var item=x.b.items.find(function(i){return i.sub===sub&&!i.checked;});
-      if(item)actions.push({box:x.k,scodeOne:x.b.catO1,optType:item.optType,optCode:item.sub,optTxt:item.label,name:item.name});
+      if(item)actions.push({box:x.k,scodeOne:x.b.catO1,catName:CAT_NAMES[x.b.catO1]||'?',optType:item.optType,optCode:item.sub,optTxt:item.label,name:item.name,dim:item.dim});
     });
   });
-  return {okBox:ok?ok.k:null,actions:actions,stdSubs:stdSubs};
+  return {okBox:ok?ok.k:null,okCat:ok?ok.b.catO1:null,actions:actions,stdSubs:stdSubs};
 }
 async function runFix(rgr,actions){
   if(actions.length===0)return {success:0};
@@ -95,11 +97,10 @@ function downloadCSV(rows,fname){
 
 var p=document.getElementById('__bap');if(p)p.remove();
 p=document.createElement('div');p.id='__bap';
-p.style.cssText='position:fixed;top:20px;left:50%;background:#fff;z-index:99999;box-shadow:0 8px 32px rgba(0,0,0,.4);border-radius:8px;width:96vw;max-width:1400px;max-height:90vh;overflow:hidden;font-family:sans-serif;font-size:13px;display:flex;flex-direction:column;';
+p.style.cssText='position:fixed;top:20px;left:50%;background:#fff;z-index:99999;box-shadow:0 8px 32px rgba(0,0,0,.4);border-radius:8px;width:96vw;max-width:1500px;max-height:90vh;overflow:hidden;font-family:sans-serif;font-size:13px;display:flex;flex-direction:column;';
 p.style.transform='translateX(-50%)';
 document.body.appendChild(p);
 
-// 드래그 + 최소화 + 닫기 함수
 function makeDraggable(handle){
   var sx=0,sy=0,ox=0,oy=0,dragging=false;
   handle.style.cursor='move';
@@ -107,24 +108,19 @@ function makeDraggable(handle){
     if(e.target.tagName==='BUTTON'||e.target.tagName==='A')return;
     dragging=true;
     var r=p.getBoundingClientRect();
-    p.style.transform='none';
-    p.style.left=r.left+'px';
-    p.style.top=r.top+'px';
-    sx=e.clientX;sy=e.clientY;ox=r.left;oy=r.top;
-    e.preventDefault();
+    p.style.transform='none';p.style.left=r.left+'px';p.style.top=r.top+'px';
+    sx=e.clientX;sy=e.clientY;ox=r.left;oy=r.top;e.preventDefault();
   });
   document.addEventListener('mousemove',function(e){
     if(!dragging)return;
-    p.style.left=(ox+e.clientX-sx)+'px';
-    p.style.top=(oy+e.clientY-sy)+'px';
+    p.style.left=(ox+e.clientX-sx)+'px';p.style.top=(oy+e.clientY-sy)+'px';
   });
   document.addEventListener('mouseup',function(){dragging=false;});
 }
 function attachHeaderControls(){
   var cl=document.getElementById('__bcl');if(cl)cl.onclick=function(){p.remove();};
   var mn=document.getElementById('__bmn');if(mn)mn.onclick=function(){
-    var body=p.querySelector('.__bbody');
-    if(!body)return;
+    var body=p.querySelector('.__bbody');if(!body)return;
     if(body.style.display==='none'){body.style.display='';mn.textContent='—';}
     else{body.style.display='none';mn.textContent='+';}
   };
@@ -132,20 +128,46 @@ function attachHeaderControls(){
 }
 var headerCtrls='<button id="__bmn" title="최소화" style="padding:6px 10px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff">—</button><button id="__bcl" style="padding:6px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff">닫기 X</button>';
 
+function boxLabel(b){
+  return b.catO1+' '+(b.catName||'?');
+}
+function boxStatus(b){
+  if(b.ghost)return '유령박스 (어드민 외)';
+  return '업종 '+b.d4+'/9, 공간 '+b.d5+'개';
+}
+function spacesText(items){
+  if(!items||items.length===0)return '없음';
+  return items.map(function(i){return i.label;}).join(', ');
+}
+
 if(isE){
   var rgr=(url.match(/RgrCode=([^&]+)/)||[])[1]||'';
   var nm=((document.querySelector('input[name="GoodsName"]')||{}).value)||'';
   var full=analyzeFull(document),s=summarize(full.boxes,full.hidO),j=rowJ(s),prop=propose(full);
   function renderEdit(){
-    var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:16px;font-weight:bold">📋 박스별 검수 - '+rgr+'</div><div style="font-size:12px;opacity:.85">'+(nm||'(상품명 없음)')+' / 종합: '+ICO[j]+' '+j+' / 부족 '+prop.actions.length+'건</div></div><div style="display:flex;gap:6px">'+(prop.actions.length>0?'<button id="__bfx" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold">자동수정 ('+prop.actions.length+'건)</button>':'')+headerCtrls+'</div></div>';
-    H+='<div class="__bbody" style="padding:14px;overflow:auto;flex:1"><table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr style="background:#5b9bd5;color:#fff"><th style="padding:6px">박스</th><th>catO1</th><th>총</th><th>업종 D4</th><th>공간 D5</th><th>판정</th><th>자사몰 검증</th></tr></thead><tbody>';
+    var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:16px;font-weight:bold">📋 카테고리별 노출 점검 - 상품코드 '+rgr+'</div><div style="font-size:12px;opacity:.85">'+(nm||'(상품명 없음)')+' · 종합: '+ICO[j]+' '+KOR_JUDGE[j]+' · 추가할 항목 '+prop.actions.length+'개</div></div><div style="display:flex;gap:6px">'+(prop.actions.length>0?'<button id="__bfx" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold">자동수정 '+prop.actions.length+'개</button>':'')+headerCtrls+'</div></div>';
+    H+='<div class="__bbody" style="padding:14px;overflow:auto;flex:1">';
+    H+='<div style="margin-bottom:8px;color:#666;font-size:11px">이 상품은 '+s.length+'개 카테고리에 등록되어 있습니다. 각 카테고리마다 업종 9개 + 공간 1개 이상 체크되어야 자사몰 카테고리+공간 필터에 노출됩니다.</div>';
+    H+='<table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr style="background:#5b9bd5;color:#fff"><th style="padding:6px">카테고리</th><th>현재 업종</th><th>현재 공간</th><th>판정</th><th>자사몰 노출 확인</th></tr></thead><tbody>';
     s.forEach(function(x){
-      var lk=(!x.ghost&&rgr)?'<a href="https://www.hanasignmall.kr/Search.php?GetSearch='+rgr+'&CCode='+x.catO1+'&CateCou=1&RsSeaTxt=%60opt%2305-01%40%EC%A3%BC%EC%B0%A8%EC%9E%A5%401360" target="_blank" style="color:#2e75b6">'+x.catO1+'+주차장</a>':'-';
-      H+='<tr style="background:'+COL[x.judge]+'"><td style="padding:6px;text-align:center;font-weight:bold">'+x.box+'</td><td style="text-align:center">'+x.catO1+'</td><td style="text-align:center">'+x.total+'</td><td style="text-align:center"><b>'+x.d4+'/9</b></td><td style="text-align:center"><b>'+x.d5+'</b></td><td style="text-align:center;font-weight:bold">'+ICO[x.judge]+' '+x.judge+'</td><td style="text-align:center">'+lk+'</td></tr>';
+      var lk=(!x.ghost&&rgr)?'<a href="https://www.hanasignmall.kr/Search.php?GetSearch='+rgr+'&CCode='+x.catO1+'&CateCou=1&RsSeaTxt=%60opt%2305-01%40%EC%A3%BC%EC%B0%A8%EC%9E%A5%401360" target="_blank" style="color:#2e75b6">'+boxLabel(x)+'+주차장 →</a>':'-';
+      H+='<tr style="background:'+COL[x.judge]+'"><td style="padding:6px;font-weight:bold">'+boxLabel(x)+'</td><td style="text-align:center"><b>'+x.d4+'/9</b></td><td>'+spacesText(x.d5items)+'</td><td style="text-align:center;font-weight:bold">'+ICO[x.judge]+' '+KOR_JUDGE[x.judge]+'</td><td>'+lk+'</td></tr>';
     });
     H+='</tbody></table>';
     if(prop.actions.length>0){
-      H+='<div style="margin-top:12px;padding:10px;background:#fff3cd;border-left:4px solid #ffc107;border-radius:4px"><b>LLM 자동수정 제안 ('+prop.actions.length+'건)</b><br>표준 박스: '+(prop.okBox||'없음 → 업종9+주차장 룰')+'<br><div style="margin-top:6px;font-size:11px">'+prop.actions.map(function(a){return a.box+'('+a.scodeOne+'): '+a.optCode+' '+a.optTxt;}).join(' / ')+'</div></div>';
+      var byBox={};prop.actions.forEach(function(a){if(!byBox[a.box])byBox[a.box]=[];byBox[a.box].push(a);});
+      H+='<div style="margin-top:12px;padding:12px;background:#fff3cd;border-left:4px solid #ffc107;border-radius:4px"><b>수정 제안 ('+prop.actions.length+'개 추가 예정)</b><div style="font-size:11px;margin-top:4px;color:#666">기준: '+(prop.okBox?'현재 정상인 '+(CAT_NAMES[prop.okCat]||'?')+' 카테고리 박스를 표준으로 다른 박스에 동일 적용':'표준 박스 없음 → 업종 9개 전체 + 주차장 공간 추가 룰 적용')+'</div>';
+      Object.keys(byBox).forEach(function(k){
+        var arr=byBox[k];
+        var ind=arr.filter(function(a){return a.dim==='04';}).map(function(a){return a.optTxt;});
+        var spc=arr.filter(function(a){return a.dim==='05';}).map(function(a){return a.optTxt;});
+        var cn=CAT_NAMES[arr[0].scodeOne]||'?';
+        H+='<div style="margin-top:6px;padding:6px 8px;background:#fff;border-radius:3px"><b>'+arr[0].scodeOne+' '+cn+'</b> 박스에 추가:<br>';
+        if(ind.length)H+='&nbsp;&nbsp;업종 '+ind.length+'개 → '+ind.join(', ')+'<br>';
+        if(spc.length)H+='&nbsp;&nbsp;공간 '+spc.length+'개 → '+spc.join(', ');
+        H+='</div>';
+      });
+      H+='</div>';
     }
     H+='</div>';
     p.innerHTML=H;
@@ -162,7 +184,7 @@ if(isE){
   return;
 }
 
-p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:16px;font-weight:bold">⏳ 박스별 감사 중...</div><div>'+headerCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:13px;color:#666"></div></div>';
+p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:16px;font-weight:bold">⏳ 카테고리별 노출 점검 중...</div><div>'+headerCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:13px;color:#666"></div></div>';
 attachHeaderControls();
 
 var rows=Array.from(document.querySelectorAll('tr')).map(function(tr){
@@ -179,7 +201,7 @@ var rows=Array.from(document.querySelectorAll('tr')).map(function(tr){
 var seen={},rgrs=[];
 rows.forEach(function(r){if(!seen[r.rgr]){seen[r.rgr]=1;rgrs.push(r);}});
 rgrs=rgrs.slice(0,30);
-if(rgrs.length===0){p.innerHTML='<div style="padding:30px"><h3>RgrCode 없음</h3></div>';return;}
+if(rgrs.length===0){p.innerHTML='<div style="padding:30px"><h3>상품코드 없음</h3></div>';return;}
 
 var res=[];
 for(var i=0;i<rgrs.length;i+=5){
@@ -199,50 +221,85 @@ function render(){
   var pg=(url.match(/page=(\d+)/)||[])[1]||'1';
 
   var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">';
-  H+='<div><div style="font-size:17px;font-weight:bold">📋 박스별 검수 - '+res.length+'건</div>';
-  H+='<div style="font-size:12px;opacity:.85;margin-top:3px">카테고리 '+cat+' / '+pg+'페이지 / OK '+st.OK+' / PARTIAL '+st.PARTIAL+' / EMPTY '+st.EMPTY;
-  if(st.GHOST_ONLY)H+=' / GHOST '+st.GHOST_ONLY;
-  if(st.ERR)H+=' / ERR '+st.ERR;
-  H+=' / 부족 add '+totalActions+'건</div></div>';
+  H+='<div><div style="font-size:17px;font-weight:bold">📋 카테고리별 노출 점검 — '+res.length+'건</div>';
+  H+='<div style="font-size:12px;opacity:.85;margin-top:3px">'+(CAT_NAMES[cat]||'?')+'('+cat+') · '+pg+'페이지 · 정상 '+st.OK+' · 일부부족 '+st.PARTIAL+' · 미설정 '+st.EMPTY;
+  if(st.GHOST_ONLY)H+=' · 유령만 '+st.GHOST_ONLY;
+  if(st.ERR)H+=' · 에러 '+st.ERR;
+  H+=' · 추가할 항목 합 '+totalActions+'개</div></div>';
   H+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
   H+='<button data-f="all" class="__bf" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#fff;color:#305496">전체</button>';
-  H+='<button data-f="fix" class="__bf" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff">수정필요</button>';
-  H+='<button data-f="empty" class="__bf" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff">EMPTY</button>';
-  if(totalActions>0)H+='<button id="__bfa" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold">전체 자동수정 ('+totalActions+')</button>';
-  H+='<button id="__bxl" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#28a745;color:#fff">엑셀 다운로드</button>';
+  H+='<button data-f="fix" class="__bf" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff">수정필요만</button>';
+  H+='<button data-f="empty" class="__bf" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff">미설정만</button>';
+  if(totalActions>0)H+='<button id="__bfa" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold">전체 자동수정 '+totalActions+'개</button>';
+  H+='<button id="__bxl" style="padding:6px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#28a745;color:#fff">엑셀(현재vs수정안) 다운로드</button>';
   H+=headerCtrls+'</div></div>';
 
-  H+='<div class="__bbody" style="overflow:auto;flex:1;display:flex;flex-direction:column"><div style="overflow:auto;flex:1"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr style="background:#5b9bd5;color:#fff;position:sticky;top:0"><th style="padding:8px;width:30px">#</th><th style="text-align:left">RgrCode</th><th style="text-align:left;min-width:220px">상품명</th><th style="text-align:left;min-width:260px">박스별 (catO1: D4/D5)</th><th style="width:90px">판정</th><th style="text-align:left;min-width:200px">LLM 제안 (add)</th><th style="width:170px">액션</th></tr></thead><tbody>';
+  H+='<div class="__bbody" style="overflow:auto;flex:1;display:flex;flex-direction:column"><div style="overflow:auto;flex:1"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr style="background:#5b9bd5;color:#fff;position:sticky;top:0"><th style="padding:8px;width:30px">#</th><th style="text-align:left">상품코드 / 상품명</th><th style="text-align:left;min-width:280px">카테고리별 현재 상태</th><th style="width:90px">판정</th><th style="text-align:left;min-width:300px">수정 제안 (이렇게 수정할 예정)</th><th style="width:160px">액션</th></tr></thead><tbody>';
 
   res.forEach(function(r,i){
-    if(r.err){H+='<tr data-j="ERR" style="background:'+COL.ERR+'"><td colspan=7 style="padding:6px">ERR '+r.rgr+': '+r.err+'</td></tr>';return;}
+    if(r.err){H+='<tr data-j="ERR" style="background:'+COL.ERR+'"><td colspan=6 style="padding:6px">에러 '+r.rgr+': '+r.err+'</td></tr>';return;}
     var j=rowJ(r.summary);
     var el='https://ad.hanasm.kr/AdminManager/MakeGoodsTypeOneDp.php?RgrCode='+r.rgr+'&EditMode=1';
-    var bc=r.summary.map(function(b){return '<span style="display:inline-block;background:'+COL[b.judge]+';padding:3px 7px;margin:1px;border-radius:3px;font-family:monospace;font-size:11px">'+ICO[b.judge]+' '+b.catO1+': <b>'+b.d4+'</b>/<b>'+b.d5+'</b></span>';}).join(' ');
-    var vl=r.summary.filter(function(b){return !b.ghost;}).map(function(b){return '<a href="https://www.hanasignmall.kr/Search.php?GetSearch='+r.rgr+'&CCode='+b.catO1+'&CateCou=1&RsSeaTxt=%60opt%2305-01%40%EC%A3%BC%EC%B0%A8%EC%9E%A5%401360" target="_blank" style="font-size:10px;color:#2e75b6;text-decoration:none;margin-right:4px">'+b.catO1+'</a>';}).join('');
+    var status=r.summary.map(function(b){
+      var bgc=COL[b.judge];
+      return '<div style="display:block;background:'+bgc+';padding:3px 7px;margin:1px 0;border-radius:3px;font-size:11px"><b>'+boxLabel(b)+'</b>: '+boxStatus(b)+(b.d5items.length?' ('+spacesText(b.d5items).slice(0,30)+(spacesText(b.d5items).length>30?'…':'')+')':'')+'</div>';
+    }).join('');
     var prop=r.proposal||{actions:[]};
-    var pBox=prop.okBox?'표준 박스 '+prop.okBox:'룰: 업종9+주차장';
-    var pTxt=prop.actions.length===0?'<span style="color:#888">없음 (정상)</span>':pBox+' → '+prop.actions.slice(0,3).map(function(a){return a.box+'/'+a.optCode;}).join(', ')+(prop.actions.length>3?' 외 '+(prop.actions.length-3)+'건':'');
+    var propTxt;
+    if(prop.actions.length===0){propTxt='<span style="color:#888">수정 불필요 (모든 카테고리 정상)</span>';}
+    else{
+      var byBox={};prop.actions.forEach(function(a){if(!byBox[a.box])byBox[a.box]=[];byBox[a.box].push(a);});
+      propTxt=(prop.okBox?'기준: '+(CAT_NAMES[prop.okCat]||'?')+' 박스 복제':'룰: 업종9+주차장')+'<br>';
+      propTxt+=Object.keys(byBox).map(function(k){
+        var arr=byBox[k];
+        var ind=arr.filter(function(a){return a.dim==='04';}).length;
+        var spc=arr.filter(function(a){return a.dim==='05';}).map(function(a){return a.optTxt;});
+        var cn=CAT_NAMES[arr[0].scodeOne]||'?';
+        return '<b>'+cn+'</b>에 '+(ind?'업종 '+ind+'개':'')+(ind&&spc.length?' + ':'')+(spc.length?'공간 ('+spc.join(', ')+')':'');
+      }).join('<br>');
+    }
     var fixBtn=prop.actions.length>0?'<button data-fix="'+i+'" class="__brfx" style="padding:3px 8px;background:#ffc107;color:#000;border:none;border-radius:3px;font-size:11px;cursor:pointer;font-weight:bold">수정 '+prop.actions.length+'</button>':'';
-    H+='<tr data-j="'+j+'" data-idx="'+i+'" style="background:'+COL[j]+';border-bottom:1px solid #eee"><td style="padding:6px;text-align:center;color:#666">'+(i+1)+'</td><td style="font-family:monospace;font-size:11px"><a href="'+el+'" target="_blank" style="color:#305496">'+r.rgr+'</a></td><td style="padding:6px 8px">'+(r.name||'').slice(0,45)+'</td><td style="padding:6px 4px">'+bc+'</td><td style="text-align:center;font-weight:bold">'+ICO[j]+' '+j+'</td><td style="padding:6px 4px;font-size:11px">'+pTxt+'</td><td style="text-align:center"><a href="'+el+'" target="_blank" style="display:inline-block;padding:3px 6px;background:#305496;color:#fff;text-decoration:none;border-radius:3px;font-size:11px;margin-right:2px">편집</a> '+fixBtn+(vl?'<br><div style="margin-top:2px">'+vl+'</div>':'')+'</td></tr>';
+    H+='<tr data-j="'+j+'" data-idx="'+i+'" style="background:'+COL[j]+';border-bottom:1px solid #eee">';
+    H+='<td style="padding:6px;text-align:center;color:#666">'+(i+1)+'</td>';
+    H+='<td style="padding:6px 8px"><div style="font-family:monospace;font-size:10px;color:#666">'+r.rgr+'</div><div>'+(r.name||'').slice(0,45)+'</div></td>';
+    H+='<td style="padding:6px 4px">'+status+'</td>';
+    H+='<td style="text-align:center;font-weight:bold">'+ICO[j]+' '+KOR_JUDGE[j]+'</td>';
+    H+='<td style="padding:6px 4px;font-size:11px">'+propTxt+'</td>';
+    H+='<td style="text-align:center"><a href="'+el+'" target="_blank" style="display:inline-block;padding:3px 6px;background:#305496;color:#fff;text-decoration:none;border-radius:3px;font-size:11px;margin-right:2px">편집</a> '+fixBtn+'</td>';
+    H+='</tr>';
   });
   H+='</tbody></table></div>';
-  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">D4=업종(9/9) / D5=공간(>=1) / GHOST=유령박스 / OK=모든 박스 D4=9 D5>=1 / LLM 제안=OK박스 복제 또는 업종9+주차장 룰 / 헤더 드래그로 이동<span style="float:right">v11.0.16.5</span></div></div>';
+  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">"카테고리"=상품 1차 카테고리 (입간판/구조물 등) / "업종 9/9"=아파트 외 9개 업종 모두 체크 / "공간"=주차장 등 / 정상=업종9 + 공간1개 이상 / 자사몰 노출=카테고리+공간 필터<span style="float:right">v11.0.16.7</span></div></div>';
 
   p.innerHTML=H;
   attachHeaderControls();
   document.getElementById('__bxl').onclick=function(){
-    var hdr=['#','RgrCode','상품명','종합판정','박스별','부족 add','LLM 제안'];
-    var data=[hdr];
+    // 엑셀: 카테고리(박스)별로 한 줄. 현재 vs 수정안 비교
+    var hdr=['#','상품코드','상품명','카테고리코드','카테고리명','현재 업종 (체크/9)','현재 공간 (체크 라벨)','판정','추가할 업종 수','추가할 공간 (라벨)','수정 후 업종','수정 후 공간 수','자사몰 검증 URL'];
+    var data=[hdr];var n=0;
     res.forEach(function(r,i){
-      if(r.err){data.push([i+1,r.rgr,r.name||'','ERR','','','']);return;}
-      var j=rowJ(r.summary);
-      var bc=r.summary.map(function(b){return (b.ghost?'G':b.judge)+' '+b.catO1+':'+b.d4+'/'+b.d5;}).join(' | ');
+      if(r.err){data.push([i+1,r.rgr,r.name||'','','','','','에러','','','','','']);return;}
       var prop=r.proposal||{actions:[]};
-      var ps=prop.actions.map(function(a){return a.box+'/'+a.optCode+' '+a.optTxt;}).join(' / ');
-      data.push([i+1,r.rgr,r.name||'',j,bc,prop.actions.length,ps]);
+      var byBox={};prop.actions.forEach(function(a){if(!byBox[a.box])byBox[a.box]=[];byBox[a.box].push(a);});
+      r.summary.forEach(function(b){
+        n++;
+        var addItems=byBox[b.box]||[];
+        var addInd=addItems.filter(function(a){return a.dim==='04';});
+        var addSpc=addItems.filter(function(a){return a.dim==='05';}).map(function(a){return a.optTxt;});
+        var afterInd=b.d4+addInd.length;
+        var afterSpc=b.d5+addSpc.length;
+        var spcLabels=b.d5items.map(function(x){return x.label;}).join(', ');
+        var verifyUrl=b.ghost?'(유령박스)':'https://www.hanasignmall.kr/Search.php?GetSearch='+r.rgr+'&CCode='+b.catO1+'&CateCou=1&RsSeaTxt=%60opt%2305-01%40%EC%A3%BC%EC%B0%A8%EC%9E%A5%401360';
+        data.push([
+          n, r.rgr, r.name||'', b.catO1, b.catName,
+          b.d4+'/9', spcLabels||'(없음)',
+          b.ghost?'유령박스':KOR_JUDGE[b.judge],
+          addInd.length, addSpc.join(', ')||'(없음)',
+          afterInd+'/9', afterSpc, verifyUrl
+        ]);
+      });
     });
-    downloadCSV(data,'box_audit_cat'+cat+'_p'+pg+'.csv');
+    downloadCSV(data,'카테고리별_노출점검_'+(CAT_NAMES[cat]||cat)+'_p'+pg+'.csv');
   };
   function flt(m){
     Array.from(p.querySelectorAll('tbody tr')).forEach(function(tr){
@@ -268,7 +325,7 @@ function render(){
   });
   var bfa=document.getElementById('__bfa');
   if(bfa)bfa.onclick=async function(){
-    if(!confirm('전체 '+totalActions+'건 자동수정 실행?'))return;
+    if(!confirm('전체 '+totalActions+'개 자동수정을 실행할까요?'))return;
     bfa.textContent='수정 중...';bfa.disabled=true;
     for(var k=0;k<res.length;k++){
       var r=res[k];if(!r.proposal||r.proposal.actions.length===0)continue;
