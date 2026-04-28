@@ -1,4 +1,4 @@
-/* 박스별 검수 대시보드 v11.0.16.8 (한국어/카테고리적합도/공간비교) */
+/* 박스별 검수 대시보드 v11.0.16.9 (한국어/카테고리적합도/공간비교) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -12,8 +12,8 @@ var KW_CAT={
   '02':['안내판','표지판','경고판','이용수칙','법령','픽토','주의','금지','경고'],
   '04':['입간판','A형','오뚜기','스텐입간판','지주간판','거치대','일반형','라운드','사각'],
   '05':['현수막','배너','플래카드','애드밴'],
-  '07':['구조물','시공','지주','말뚝','매립식','앙카'],
-  '08':['도로안전','주차','차량','요일제','속도','과속','신호','횡단','보호구역','소방차'],
+  '07':['구조물','시공','지주','말뚝','매립식','앙카','스텐입간판','거치대','오뚜기'],
+  '08':['도로안전','주차','차량','요일제','속도','과속','신호','횡단','보호구역','소방차','오뚜기','입간판','스텐입간판','A형'],
   '09':['각종','각종물품','반사판','데코','잡화'],
   '10':['스티커','라벨','시트지','인쇄물','POP']
 };
@@ -199,7 +199,7 @@ if(isE){
   });
   H+='</tbody></table>';
   // 부적합 카테고리 경고
-  var mismatchCats=s.filter(function(x){return !x.ghost && isCatSuitable(nm,x.catO1)===false;});
+  var mismatchCats=s.filter(function(x){return !x.ghost && x.judge!=='OK' && isCatSuitable(nm,x.catO1)===false;});
   if(mismatchCats.length>0){
     H+='<div style="margin-top:12px;padding:12px;background:#ffe0e0;border-left:5px solid #d9534f;border-radius:4px"><b>⚠ 부적합 의심 카테고리</b><div style="font-size:13px;margin-top:6px">상품명 "'+(nm||'').slice(0,40)+'"에 대해 다음 카테고리가 부적합으로 보입니다:</div>';
     mismatchCats.forEach(function(x){
@@ -267,7 +267,7 @@ function render(){
   res.forEach(function(r){
     if(r.err){st.ERR++;return;}
     st[rowJ(r.summary)]++;
-    if(r.summary.some(function(x){return !x.ghost && isCatSuitable(r.name,x.catO1)===false;}))st.MISMATCH++;
+    if(r.summary.some(function(x){return !x.ghost && x.judge!=='OK' && isCatSuitable(r.name,x.catO1)===false;}))st.MISMATCH++;
   });
   var totalActions=res.reduce(function(s,r){return s+(r.proposal?r.proposal.actions.length:0);},0);
   var cat=(url.match(/CodeT1_1=([^&]+)/)||[])[1]||'?';
@@ -296,14 +296,14 @@ function render(){
     var el='https://ad.hanasm.kr/AdminManager/MakeGoodsTypeOneDp.php?RgrCode='+r.rgr+'&EditMode=1';
     var status=r.summary.map(function(b){
       var suit=isCatSuitable(r.name,b.catO1);
-      var suitMark=suit===false?' <span style="color:#d9534f;font-weight:bold">[부적합 의심]</span>':'';
-      var bgc=suit===false?COL.MISMATCH:COL[b.judge];
+      var suitMark=(suit===false&&b.judge!=='OK')?' <span style="color:#d9534f;font-weight:bold">[부적합 의심]</span>':'';
+      var bgc=(suit===false&&b.judge!=='OK')?COL.MISMATCH:COL[b.judge];
       var spcTxt=b.d5items.length?spacesText(b.d5items):'(공간 없음)';
       return '<div style="display:block;background:'+bgc+';padding:5px 8px;margin:2px 0;border-radius:3px;font-size:13px"><b>'+b.catO1+' '+b.catName+'</b>'+suitMark+': 업종 <b>'+b.d4+'/9</b>, 공간 <b>'+b.d5+'개</b> ('+spcTxt+')</div>';
     }).join('');
     var prop=r.proposal||{actions:[]};
     var propTxt;
-    var mismatchCats=r.summary.filter(function(x){return !x.ghost && isCatSuitable(r.name,x.catO1)===false;});
+    var mismatchCats=r.summary.filter(function(x){return !x.ghost && x.judge!=='OK' && isCatSuitable(r.name,x.catO1)===false;});
     var mismatchTxt='';
     if(mismatchCats.length>0){
       mismatchTxt='<div style="background:#ffe0e0;padding:4px 6px;margin-bottom:4px;border-radius:3px;font-size:12px;color:#a00"><b>제외 검토</b>: '+mismatchCats.map(function(x){return x.catO1+' '+x.catName;}).join(', ')+' (자동 제거 X, 사람 확인)</div>';
@@ -342,7 +342,7 @@ function render(){
     H+='</tr>';
   });
   H+='</tbody></table></div>';
-  H+='<div style="padding:10px 16px;background:#f5f5f5;font-size:13px;color:#666;border-top:1px solid #ddd">정상=업종 9/9 + 공간 1개 이상 / 부적합 의심=상품명 키워드 미매칭 (사람 확인) / 자동 제거 금지 - 추가만 자동<span style="float:right">v11.0.16.8</span></div></div>';
+  H+='<div style="padding:10px 16px;background:#f5f5f5;font-size:13px;color:#666;border-top:1px solid #ddd">정상=업종 9/9 + 공간 1개 이상 / 부적합 의심=상품명 키워드 미매칭 (사람 확인) / 자동 제거 금지 - 추가만 자동<span style="float:right">v11.0.16.9</span></div></div>';
 
   p.innerHTML=H;
   attachHeaderControls();
