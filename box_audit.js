@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.17.1 (catO+catT 풀통합 + catT fallback) */
+/* 박스별 검수 v11.0.17.2 (catO+catT 풀통합 + catT fallback) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -29,7 +29,7 @@ function summarize1(bs,hO){
     var d4=b.items.filter(x=>x.dim==='04'&&x.checked);
     var d5=b.items.filter(x=>x.dim==='05'&&x.checked);
     var gh=hO.indexOf(b.catX)<0;
-    var v=gh?'GHOST':((d4.length>=9&&d5.length>=1)?'OK':((d4.length===0&&d5.length===0)?'EMPTY':'PARTIAL'));
+    var v=gh?'GHOST':((d4.length>=9&&d5.length>=5)?'OK':((d4.length===0&&d5.length===0)?'EMPTY':'PARTIAL'));
     return {box:k,catX:b.catX,catName:CAT_NAMES[b.catX]||'?',d4:d4.length,d5:d5.length,d4items:d4,d5items:d5,ghost:gh,judge:v};
   });
 }
@@ -62,24 +62,38 @@ function propose(full,name){
   var ok1=normal1.find(x=>{
     var d4=x.b.items.filter(i=>i.dim==='04'&&i.checked).length;
     var d5=x.b.items.filter(i=>i.dim==='05'&&i.checked).length;
-    return d4>=9&&d5>=1;
+    return d4>=9&&d5>=5;
   });
   var stdInd=['04-01','04-02','04-03','04-04','04-05','04-06','04-07','04-08','04-09'];
   var stdSpc=ok1?ok1.b.items.filter(i=>i.checked&&i.dim==='05').map(i=>i.label):[];
   suggestSpaces(name||'').forEach(l=>{if(stdSpc.indexOf(l)<0)stdSpc.push(l);});
   if(stdSpc.length===0)stdSpc=['주차장'];
   
-  // catO 박스 (SelOptCat1)
+  // catO 박스 (SelOptCat1) — 업종 9 + 공간 5개 (라벨 우선 + fallback)
+  var TGT_O=5;
   normal1.forEach(x=>{
     if(ok1&&x.k===ok1.k)return;
+    // 업종 9개
     stdInd.forEach(sub=>{
       var it=x.b.items.find(i=>i.sub===sub&&!i.checked);
       if(it)actions.push({type:'cat1',box:x.k,scodeOne:x.b.catX,catName:CAT_NAMES[x.b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
     });
+    // 공간 5개 채우기
+    var chk5=x.b.items.filter(i=>i.dim==='05'&&i.checked).length;
+    if(chk5>=TGT_O)return;
+    var added5={};
     stdSpc.forEach(lbl=>{
-      var it=x.b.items.find(i=>i.dim==='05'&&i.label===lbl&&!i.checked);
-      if(it)actions.push({type:'cat1',box:x.k,scodeOne:x.b.catX,catName:CAT_NAMES[x.b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
+      if(chk5+Object.keys(added5).length>=TGT_O)return;
+      var it=x.b.items.find(i=>i.dim==='05'&&i.label===lbl&&!i.checked&&!added5[i.sub]);
+      if(it){added5[it.sub]=1;actions.push({type:'cat1',box:x.k,scodeOne:x.b.catX,catName:CAT_NAMES[x.b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});}
     });
+    if(chk5+Object.keys(added5).length<TGT_O){
+      x.b.items.filter(i=>i.dim==='05'&&!i.checked&&!added5[i.sub]).forEach(it=>{
+        if(chk5+Object.keys(added5).length>=TGT_O)return;
+        added5[it.sub]=1;
+        actions.push({type:'cat1',box:x.k,scodeOne:x.b.catX,catName:CAT_NAMES[x.b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
+      });
+    }
   });
   
   // catT 박스: 5개 채울 때까지 (라벨 우선, 부족 시 sub 순서대로 fallback)
@@ -286,7 +300,7 @@ function render(){
     H+='</tr>';
   });
   H+='</tbody></table></div>';
-  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO 박스 D4=업종/D5=공간 / 🏢 catT 박스 D5=공간 (5개+ OK) / 추가만 자동<span style="float:right">v11.0.17.1</span></div></div>';
+  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO 박스 D4=업종/D5=공간 / 🏢 catT 박스 D5=공간 (5개+ OK) / 추가만 자동<span style="float:right">v11.0.17.2</span></div></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스타입','catX','이름','업종','공간','판정','추가업종','추가공간','자사몰URL'];
