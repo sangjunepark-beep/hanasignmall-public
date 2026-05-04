@@ -1,15 +1,19 @@
-/* 박스별 검수 v11.0.18.1 (Claude Haiku LLM 통합 + 적합도 우선) */
+/* 박스별 검수 v11.0.18.2 (부적합 검증 + 옥상 등 거름) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
 var KEY=localStorage.getItem('__ANTHROPIC_KEY');
-if(!KEY){KEY=prompt('Claude API Key (한 번만 입력, 브라우저에 저장):');if(KEY)localStorage.setItem('__ANTHROPIC_KEY',KEY);}
+if(!KEY){KEY=prompt('Claude API Key (한 번만 입력):');if(KEY)localStorage.setItem('__ANTHROPIC_KEY',KEY);}
 var LLM_ENABLED=!!KEY;
-var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',ERR:'#fadbd8'};
-var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',ERR:'에러'};
-var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',ERR:'⚠'};
+var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',MISMATCH:'#ffd6d6',ERR:'#fadbd8'};
+var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MISMATCH:'부적합포함',ERR:'에러'};
+var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠'};
 var CAT_NAMES={'01':'게시판','02':'안내판','04':'입간판','05':'현수막/배너','07':'구조물','08':'도로안전용품','09':'각종물품','10':'인쇄물/스티커','13':'개인결제'};
 var T_NAMES={'01':'학교/학원','02':'식당/카페','03':'아파트','04':'호텔/펜션','05':'병원/요양시설','06':'회사/공장','07':'공공기관','08':'헬스/레저','09':'기타업종'};
+
+// 사인물 일반 부적합 공간 (룰 기반 1차 검출)
+var BAD_SPACES=['옥상','수영장/사우나','수영장','사우나','키즈룸','화장실','독서실','골프연습장','헬스장'];
+function isBadSpace(label){return BAD_SPACES.indexOf(label)>=0;}
 
 function analyzeFull(d){
   var cb=Array.from(d.querySelectorAll('input[type=checkbox]'));
@@ -30,21 +34,33 @@ function summarize1(bs,hO){
     var b=bs[k];
     var d4=b.items.filter(x=>x.dim==='04'&&x.checked);
     var d5=b.items.filter(x=>x.dim==='05'&&x.checked);
+    var bad=d5.filter(x=>isBadSpace(x.label));
     var gh=hO.indexOf(b.catX)<0;
-    var v=gh?'GHOST':((d4.length>=9&&d5.length>=3)?'OK':((d4.length===0&&d5.length===0)?'EMPTY':'PARTIAL'));
-    return {box:k,catX:b.catX,catName:CAT_NAMES[b.catX]||'?',d4:d4.length,d5:d5.length,d4items:d4,d5items:d5,ghost:gh,judge:v};
+    var v;
+    if(gh)v='GHOST';
+    else if(bad.length>0)v='MISMATCH';
+    else if(d4.length>=9&&d5.length>=3)v='OK';
+    else if(d4.length===0&&d5.length===0)v='EMPTY';
+    else v='PARTIAL';
+    return {box:k,catX:b.catX,catName:CAT_NAMES[b.catX]||'?',d4:d4.length,d5:d5.length,d4items:d4,d5items:d5,bad:bad,ghost:gh,judge:v};
   });
 }
 function summarize2(bs){
   return Object.keys(bs).map(k=>{
     var b=bs[k];
     var d5=b.items.filter(x=>x.dim==='05'&&x.checked);
-    var v=d5.length>=3?'OK':(d5.length===0?'EMPTY':'PARTIAL');
-    return {box:k,catX:b.catX,catName:T_NAMES[b.catX]||'?',d5:d5.length,d5items:d5,judge:v};
+    var bad=d5.filter(x=>isBadSpace(x.label));
+    var v;
+    if(bad.length>0)v='MISMATCH';
+    else if(d5.length>=3)v='OK';
+    else if(d5.length===0)v='EMPTY';
+    else v='PARTIAL';
+    return {box:k,catX:b.catX,catName:T_NAMES[b.catX]||'?',d5:d5.length,d5items:d5,bad:bad,judge:v};
   });
 }
 function rowJ(s1,s2){
   var r1=s1.filter(b=>!b.ghost);
+  if(r1.some(b=>b.judge==='MISMATCH')||s2.some(b=>b.judge==='MISMATCH'))return 'MISMATCH';
   var allOK=r1.length>0&&r1.every(b=>b.judge==='OK')&&s2.every(b=>b.judge==='OK');
   if(allOK)return 'OK';
   if(r1.some(b=>b.judge==='EMPTY')||s2.some(b=>b.judge==='EMPTY'))return 'EMPTY';
@@ -55,20 +71,21 @@ async function llmJudge(name,boxRequests){
   if(!KEY||boxRequests.length===0)return null;
   var pt='하나사인몰 사인물 상품에 적합한 노출 공간을 박스별로 추천.\n\n';
   pt+='상품명: "'+name+'"\n\n';
-  pt+='판단 원칙:\n';
-  pt+='1. 진짜 적합한 공간만 선택 (5개 미만 OK, 억지로 채우지 말 것)\n';
-  pt+='2. 사인물의 실제 설치 위치 고려:\n';
-  pt+='   - 입간판/A형/오뚜기 → 1층 입구, 주차장, 공용통로, 카운터, 도로/인도\n';
-  pt+='   - 안내판/표지판 → 출입구, 통로, 주차장, 시설 입구\n';
-  pt+='   - 주차 관련 → 주차장, 공영주차장, 도로/인도, 건물외부\n';
-  pt+='3. 부적합 예시: 일반 사인물에 옥상/수영장/사우나/화장실 등은 부적합\n';
+  pt+='판단 원칙 (엄격):\n';
+  pt+='1. 진짜 적합한 공간만 선택. 5개 미만 OK. 절대 억지로 채우지 말 것.\n';
+  pt+='2. 사인물(입간판/안내판/표지판/스티커 등)은 사람 통행 위치에 설치:\n';
+  pt+='   - 입구, 주차장, 공용통로, 카운터, 출입구, 도로/인도, 건물외부\n';
+  pt+='3. 절대 부적합 (이런 곳에 사인물 안 둠):\n';
+  pt+='   - 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장\n';
+  pt+='   → 이런 곳은 추천 절대 X (룰 위반 시 작업 거부)\n';
   pt+='4. 업종별 적합 공간:\n';
-  pt+='   - 학교/학원: 입구, 주차장, 운동장, 도서관/문화시설, 공용통로\n';
+  pt+='   - 학교/학원: 입구/교문, 주차장, 운동장, 공용통로, 도서관/문화시설\n';
   pt+='   - 아파트: 입구, 주차장, 커뮤니티시설, 관리사무소, 엘리베이터\n';
-  pt+='   - 회사/공장: 정문, 주차장, 사무실 안내, 외부\n';
+  pt+='   - 회사/공장: 정문, 주차장, 외부, 사무실 안내\n';
+  pt+='   - 병원/요양시설: 입구, 주차장, 외부\n';
   pt+='\n박스별 가용 공간:\n';
   boxRequests.forEach(r=>{pt+='- ['+r.label+'] 가용: ['+r.options.join(', ')+']\n';});
-  pt+='\n응답: JSON만, 적합한 라벨만 (5개 미만 OK)\n{\n';
+  pt+='\n응답: JSON만, 적합한 라벨만 (5개 미만 OK, 옥상/수영장/화장실 등 절대 X)\n{\n';
   boxRequests.forEach((r,i)=>{pt+='  "'+r.key+'": [...적합 라벨]'+(i<boxRequests.length-1?',':'')+'\n';});
   pt+='}';
   try{
@@ -96,48 +113,41 @@ async function propose(full,name){
   var arr1=Object.keys(bs1).map(k=>({k:k,b:bs1[k]}));
   var normal1=arr1.filter(x=>hO.indexOf(x.b.catX)>=0);
   var stdInd=['04-01','04-02','04-03','04-04','04-05','04-06','04-07','04-08','04-09'];
-  
-  // catO 업종 9개
   normal1.forEach(x=>{
     stdInd.forEach(sub=>{
       var it=x.b.items.find(i=>i.sub===sub&&!i.checked);
       if(it)actions.push({type:'cat1',box:x.k,scodeOne:x.b.catX,catName:CAT_NAMES[x.b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
     });
   });
-  
-  // 공간 추천 박스 list
   var boxReqs=[];
   normal1.forEach(x=>{
-    var chk=x.b.items.filter(i=>i.dim==='05'&&i.checked).length;
+    var chk=x.b.items.filter(i=>i.dim==='05'&&i.checked&&!isBadSpace(i.label)).length;
     if(chk>=3)return;
-    var opts=x.b.items.filter(i=>i.dim==='05'&&!i.checked).map(i=>i.label);
+    var opts=x.b.items.filter(i=>i.dim==='05'&&!i.checked&&!isBadSpace(i.label)).map(i=>i.label);
     if(opts.length===0)return;
     boxReqs.push({key:x.k,type:'cat1',catX:x.b.catX,label:'카테고리 '+x.b.catX+' '+(CAT_NAMES[x.b.catX]||'?'),options:opts,need:5-chk,box:x.b});
   });
   Object.keys(bs2).forEach(k=>{
     var b=bs2[k];
-    var chk=b.items.filter(i=>i.dim==='05'&&i.checked).length;
+    var chk=b.items.filter(i=>i.dim==='05'&&i.checked&&!isBadSpace(i.label)).length;
     if(chk>=3)return;
-    var opts=b.items.filter(i=>i.dim==='05'&&!i.checked).map(i=>i.label);
+    var opts=b.items.filter(i=>i.dim==='05'&&!i.checked&&!isBadSpace(i.label)).map(i=>i.label);
     if(opts.length===0)return;
     boxReqs.push({key:k,type:'cat2',catX:b.catX,label:'업종 '+b.catX+' '+(T_NAMES[b.catX]||'?'),options:opts,need:5-chk,box:b});
   });
-  
   var llmResult=null;
   if(LLM_ENABLED&&boxReqs.length>0){llmResult=await llmJudge(name||'',boxReqs);}
-  
-  // LLM 응답 그대로 사용 (적합한 것만, 5개 미만 OK)
   boxReqs.forEach(req=>{
     var picks=(llmResult&&llmResult[req.key])?llmResult[req.key]:null;
     var added={};
     if(picks&&Array.isArray(picks)){
       picks.slice(0,5).forEach(lbl=>{
+        if(isBadSpace(lbl))return;
         var it=req.box.items.find(i=>i.dim==='05'&&i.label===lbl&&!i.checked&&!added[i.sub]);
         if(it){added[it.sub]=1;actions.push({type:req.type,box:req.key,scodeOne:req.catX,catName:(req.type==='cat1'?CAT_NAMES:T_NAMES)[req.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});}
       });
     } else if(!llmResult){
-      // LLM 호출 실패 시만 룰 fallback
-      req.box.items.filter(i=>i.dim==='05'&&!i.checked&&!added[i.sub]).forEach(it=>{
+      req.box.items.filter(i=>i.dim==='05'&&!i.checked&&!isBadSpace(i.label)&&!added[i.sub]).forEach(it=>{
         if(Object.keys(added).length>=req.need)return;
         added[it.sub]=1;
         actions.push({type:req.type,box:req.key,scodeOne:req.catX,catName:(req.type==='cat1'?CAT_NAMES:T_NAMES)[req.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
@@ -207,11 +217,16 @@ function attachCtrls(){
   var hdr=p.querySelector('.__bhdr');if(hdr)makeDraggable(hdr);
 }
 var hdrCtrls='<button id="__bmn" style="padding:7px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:14px">—</button><button id="__bcl" style="padding:7px 16px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:14px">닫기 X</button>';
-var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 Claude Haiku</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰 모드</span>';
+var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 Haiku</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰 모드</span>';
 
 function spcText(items){return (!items||items.length===0)?'없음':items.map(i=>i.label).join(', ');}
+function spcTextBad(items,badList){
+  if(!items||items.length===0)return '없음';
+  var badSubs={};(badList||[]).forEach(b=>{badSubs[b.sub]=1;});
+  return items.map(i=>badSubs[i.sub]?'<span style="color:#d9534f;font-weight:bold">⚠'+i.label+'</span>':i.label).join(', ');
+}
 
-p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'Claude Haiku 판단 중':'룰 기반 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
+p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'Haiku 판단 중':'룰 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
 attachCtrls();
 
 if(isE){
@@ -220,23 +235,27 @@ if(isE){
   var full=analyzeFull(document),s1=summarize1(full.boxes1,full.hidO),s2=summarize2(full.boxes2);
   var prop=await propose(full,nm);
   var j=rowJ(s1,s2);
-  var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:bold">📋 통합 검수 - '+rgr+llmBadge+'</div><div style="font-size:14px;opacity:.85">'+(nm||'(없음)')+' · '+ICO[j]+' '+KOR[j]+' · 추가 '+prop.actions.length+'개'+(prop.llmUsed?' · 🤖 LLM 판단':' · 룰 fallback')+'</div></div><div style="display:flex;gap:6px">'+(prop.actions.length>0?'<button id="__bfx" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:14px">자동수정 '+prop.actions.length+'</button>':'')+hdrCtrls+'</div></div>';
+  var allBads=[];s1.concat(s2).forEach(b=>{(b.bad||[]).forEach(x=>allBads.push(b.catX+' '+b.catName+': '+x.label));});
+  var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:bold">📋 통합 검수 - '+rgr+llmBadge+'</div><div style="font-size:14px;opacity:.85">'+(nm||'(없음)')+' · '+ICO[j]+' '+KOR[j]+(allBads.length>0?' · 🚫 부적합 '+allBads.length+'개':'')+'</div></div><div style="display:flex;gap:6px">'+(prop.actions.length>0?'<button id="__bfx" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:14px">자동수정 '+prop.actions.length+'</button>':'')+hdrCtrls+'</div></div>';
   H+='<div class="__bbody" style="padding:14px;overflow:auto;flex:1">';
+  if(allBads.length>0){
+    H+='<div style="background:#ffe0e0;border-left:5px solid #d9534f;padding:10px;margin-bottom:10px;border-radius:4px"><b>🚫 부적합 공간 발견 ('+allBads.length+'개)</b><div style="font-size:12px;color:#a00;margin-top:4px">사인물에 부적합한 위치(옥상/화장실/수영장 등) 체크되어 있음. 사람 검수 후 어드민에서 직접 해제 필요 (자동 제거 X).</div><div style="font-size:11px;margin-top:6px">'+allBads.join(' / ')+'</div></div>';
+  }
   H+='<h4 style="margin:6px 0">📦 카테고리(상품별) 박스</h4>';
   H+='<table style="border-collapse:collapse;width:100%;font-size:13px;margin-bottom:10px"><thead><tr style="background:#5b9bd5;color:#fff"><th style="padding:6px">카테고리</th><th>업종</th><th>공간</th><th>판정</th></tr></thead><tbody>';
   s1.forEach(x=>{
-    H+='<tr style="background:'+COL[x.judge]+'"><td style="padding:6px;font-weight:bold">'+x.catX+' '+x.catName+'</td><td style="text-align:center"><b>'+x.d4+'/9</b></td><td>'+spcText(x.d5items)+'</td><td style="text-align:center;font-weight:bold">'+ICO[x.judge]+' '+KOR[x.judge]+'</td></tr>';
+    H+='<tr style="background:'+COL[x.judge]+'"><td style="padding:6px;font-weight:bold">'+x.catX+' '+x.catName+'</td><td style="text-align:center"><b>'+x.d4+'/9</b></td><td>'+spcTextBad(x.d5items,x.bad)+'</td><td style="text-align:center;font-weight:bold">'+ICO[x.judge]+' '+KOR[x.judge]+'</td></tr>';
   });
   H+='</tbody></table>';
-  H+='<h4 style="margin:6px 0">🏢 업종별 박스 (3개+ OK)</h4>';
+  H+='<h4 style="margin:6px 0">🏢 업종별 박스 (3개+ OK, 부적합 0)</h4>';
   H+='<table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr style="background:#70ad47;color:#fff"><th style="padding:6px">업종</th><th>공간</th><th>판정</th></tr></thead><tbody>';
   s2.forEach(x=>{
-    H+='<tr style="background:'+COL[x.judge]+'"><td style="padding:6px;font-weight:bold">'+x.catX+' '+x.catName+'</td><td>'+spcText(x.d5items)+' ('+x.d5+'개)</td><td style="text-align:center;font-weight:bold">'+ICO[x.judge]+' '+KOR[x.judge]+'</td></tr>';
+    H+='<tr style="background:'+COL[x.judge]+'"><td style="padding:6px;font-weight:bold">'+x.catX+' '+x.catName+'</td><td>'+spcTextBad(x.d5items,x.bad)+' ('+x.d5+'개'+(x.bad.length?', 부적합 '+x.bad.length:'')+')</td><td style="text-align:center;font-weight:bold">'+ICO[x.judge]+' '+KOR[x.judge]+'</td></tr>';
   });
   H+='</tbody></table>';
   if(prop.actions.length>0){
     var byBox={};prop.actions.forEach(a=>{var k=a.type+'|'+a.box;if(!byBox[k])byBox[k]=[];byBox[k].push(a);});
-    H+='<div style="margin-top:12px;padding:12px;background:#fff3cd;border-left:5px solid #ffc107;border-radius:4px"><b>📝 '+(prop.llmUsed?'🤖 Haiku 판단':'룰 fallback')+' 수정 제안 ('+prop.actions.length+'개)</b>';
+    H+='<div style="margin-top:12px;padding:12px;background:#fff3cd;border-left:5px solid #ffc107;border-radius:4px"><b>📝 '+(prop.llmUsed?'🤖 Haiku 판단':'룰')+' 추가 제안 ('+prop.actions.length+'개)</b>';
     Object.keys(byBox).forEach(k=>{
       var arr=byBox[k],t=k.split('|')[0];
       var ind=arr.filter(a=>a.dim==='04').map(a=>a.optTxt);
@@ -277,12 +296,12 @@ var res=[];
 for(var i=0;i<rgrs.length;i++){
   var o=rgrs[i];
   res.push(await fetchAndAnalyze(o.rgr,o.name));
-  var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent=res.length+' / '+rgrs.length+(LLM_ENABLED?' (Haiku 판단 중)':'');
+  var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent=res.length+' / '+rgrs.length+(LLM_ENABLED?' (Haiku)':'');
 }
 window.__bapResults=res;
 
 function render(){
-  var st={OK:0,PARTIAL:0,EMPTY:0,ERR:0};
+  var st={OK:0,PARTIAL:0,EMPTY:0,MISMATCH:0,ERR:0};
   res.forEach(r=>{if(r.err)st.ERR++;else st[rowJ(r.s1,r.s2)]++;});
   var totalAct=res.reduce((s,r)=>s+(r.proposal?r.proposal.actions.length:0),0);
   var llmCount=res.filter(r=>r.proposal&&r.proposal.llmUsed).length;
@@ -290,7 +309,8 @@ function render(){
   var pg=(url.match(/page=(\d+)/)||[])[1]||'1';
   var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">';
   H+='<div><div style="font-size:18px;font-weight:bold">📋 통합 검수 - '+res.length+'건'+llmBadge+'</div>';
-  H+='<div style="font-size:13px;opacity:.85;margin-top:3px">'+(CAT_NAMES[cat]||'?')+'('+cat+') / '+pg+'페이지 / 정상 '+st.OK+' / 일부부족 '+st.PARTIAL+' / 미설정 '+st.EMPTY;
+  H+='<div style="font-size:13px;opacity:.85;margin-top:3px">'+(CAT_NAMES[cat]||'?')+'('+cat+') / '+pg+'p / 정상 '+st.OK+' / 일부부족 '+st.PARTIAL+' / 미설정 '+st.EMPTY;
+  if(st.MISMATCH)H+=' / 🚫 부적합포함 '+st.MISMATCH;
   if(st.ERR)H+=' / 에러 '+st.ERR;
   H+=' / 추가 '+totalAct+'개';
   if(LLM_ENABLED)H+=' / 🤖 '+llmCount+'/'+res.length;
@@ -298,18 +318,19 @@ function render(){
   H+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
   H+='<button data-f="all" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#fff;color:#305496;font-size:13px">전체</button>';
   H+='<button data-f="fix" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:13px">수정필요</button>';
+  H+='<button data-f="bad" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:13px">🚫 부적합만</button>';
   if(totalAct>0)H+='<button id="__bfa" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:13px">전체 자동수정 '+totalAct+'</button>';
   H+='<button id="__bxl" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#28a745;color:#fff;font-size:13px">엑셀</button>';
   H+=hdrCtrls+'</div></div>';
-  H+='<div class="__bbody" style="overflow:auto;flex:1;display:flex;flex-direction:column"><div style="overflow:auto;flex:1"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr style="background:#5b9bd5;color:#fff;position:sticky;top:0"><th style="padding:8px;width:30px">#</th><th style="text-align:left;min-width:170px">상품</th><th style="text-align:left;min-width:280px">📦 카테고리</th><th style="text-align:left;min-width:280px">🏢 업종별</th><th style="width:90px">판정</th><th style="text-align:left;min-width:240px">제안</th><th style="width:140px">액션</th></tr></thead><tbody>';
+  H+='<div class="__bbody" style="overflow:auto;flex:1;display:flex;flex-direction:column"><div style="overflow:auto;flex:1"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr style="background:#5b9bd5;color:#fff;position:sticky;top:0"><th style="padding:8px;width:30px">#</th><th style="text-align:left;min-width:170px">상품</th><th style="text-align:left;min-width:280px">📦 카테고리</th><th style="text-align:left;min-width:280px">🏢 업종별</th><th style="width:100px">판정</th><th style="text-align:left;min-width:200px">제안</th><th style="width:140px">액션</th></tr></thead><tbody>';
   res.forEach((r,i)=>{
     if(r.err){H+='<tr data-j="ERR" style="background:'+COL.ERR+'"><td colspan=7 style="padding:6px">에러 '+r.rgr+': '+r.err+'</td></tr>';return;}
     var j=rowJ(r.s1,r.s2);
     var el='https://ad.hanasm.kr/AdminManager/MakeGoodsTypeOneDp.php?RgrCode='+r.rgr+'&EditMode=1';
-    var s1Html=r.s1.map(b=>'<div style="background:'+COL[b.judge]+';padding:3px 6px;margin:1px 0;border-radius:3px;font-size:11px">'+ICO[b.judge]+' <b>'+b.catX+' '+b.catName+'</b>: 업종 '+b.d4+'/9, 공간 '+b.d5+'</div>').join('');
+    var s1Html=r.s1.map(b=>'<div style="background:'+COL[b.judge]+';padding:3px 6px;margin:1px 0;border-radius:3px;font-size:11px">'+ICO[b.judge]+' <b>'+b.catX+' '+b.catName+'</b>: 업종 '+b.d4+'/9, 공간 '+b.d5+(b.bad.length?' (🚫'+b.bad.length+')':'')+'</div>').join('');
     var s2Html=r.s2.map(b=>{
-      var sp=b.d5items.length?spcText(b.d5items).slice(0,30):'(없음)';
-      return '<div style="background:'+COL[b.judge]+';padding:3px 6px;margin:1px 0;border-radius:3px;font-size:11px">'+ICO[b.judge]+' <b>'+b.catX+' '+b.catName+'</b>: '+b.d5+'개 ('+sp+')</div>';
+      var sp=b.d5items.length?spcTextBad(b.d5items,b.bad).slice(0,80):'(없음)';
+      return '<div style="background:'+COL[b.judge]+';padding:3px 6px;margin:1px 0;border-radius:3px;font-size:11px">'+ICO[b.judge]+' <b>'+b.catX+' '+b.catName+'</b>: '+b.d5+'개'+(b.bad.length?' (🚫'+b.bad.length+')':'')+'</div>';
     }).join('');
     var prop=r.proposal||{actions:[]};
     var pTxt='';
@@ -331,24 +352,26 @@ function render(){
     H+='</tr>';
   });
   H+='</tbody></table></div>';
-  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO + 🏢 catT 둘 다 3개+ OK / '+(LLM_ENABLED?'🤖 Haiku 적합도 우선':'(룰 모드)')+'<span style="float:right">v11.0.18.1</span></div></div>';
+  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO + 🏢 catT 둘 다 3개+ OK / 🚫 부적합(옥상/수영장/화장실 등) 발견 시 사람 검수 / '+(LLM_ENABLED?'🤖 Haiku':'룰')+'<span style="float:right">v11.0.18.2</span></div></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
-    var hdr=['#','상품코드','상품명','박스타입','catX','이름','업종','공간','판정','추가업종','추가공간','LLM','URL'];
+    var hdr=['#','상품코드','상품명','박스타입','catX','이름','업종','공간','부적합','판정','추가업종','추가공간','LLM','URL'];
     var data=[hdr];var n=0;
     res.forEach((r,i)=>{
-      if(r.err){data.push([i+1,r.rgr,r.name||'','','','','','','에러','','','','']);return;}
+      if(r.err){data.push([i+1,r.rgr,r.name||'','','','','','','','에러','','','','']);return;}
       var prop=r.proposal||{actions:[]};
       var byBox={};prop.actions.forEach(a=>{var k=a.type+'|'+a.box;if(!byBox[k])byBox[k]=[];byBox[k].push(a);});
       r.s1.forEach(b=>{
         n++;var ad=byBox['cat1|'+b.box]||[];
         var ai=ad.filter(a=>a.dim==='04').length,as=ad.filter(a=>a.dim==='05').map(a=>a.optTxt).join(', ')||'-';
-        data.push([n,r.rgr,r.name||'','catO',b.catX,b.catName,b.d4+'/9',spcText(b.d5items)||'없음',KOR[b.judge],ai,as,prop.llmUsed?'Y':'N','https://www.hanasignmall.kr/Search.php?GetSearch='+r.rgr+'&CCode='+b.catX+'&CateCou=1']);
+        var bad=b.bad.map(x=>x.label).join(', ')||'-';
+        data.push([n,r.rgr,r.name||'','catO',b.catX,b.catName,b.d4+'/9',spcText(b.d5items)||'없음',bad,KOR[b.judge],ai,as,prop.llmUsed?'Y':'N','https://www.hanasignmall.kr/Search.php?GetSearch='+r.rgr+'&CCode='+b.catX+'&CateCou=1']);
       });
       r.s2.forEach(b=>{
         n++;var ad=byBox['cat2|'+b.box]||[];
         var as=ad.filter(a=>a.dim==='05').map(a=>a.optTxt).join(', ')||'-';
-        data.push([n,r.rgr,r.name||'','catT',b.catX,b.catName,'-',spcText(b.d5items)||'없음',KOR[b.judge],'-',as,prop.llmUsed?'Y':'N','https://www.hanasignmall.kr/shop/DisplayList.php?CCode='+b.catX+'&CateType=2']);
+        var bad=b.bad.map(x=>x.label).join(', ')||'-';
+        data.push([n,r.rgr,r.name||'','catT',b.catX,b.catName,'-',spcText(b.d5items)||'없음',bad,KOR[b.judge],'-',as,prop.llmUsed?'Y':'N','https://www.hanasignmall.kr/shop/DisplayList.php?CCode='+b.catX+'&CateType=2']);
       });
     });
     downloadCSV(data,'통합검수_'+(CAT_NAMES[cat]||cat)+'_p'+pg+'.csv');
@@ -356,7 +379,7 @@ function render(){
   function flt(m){
     Array.from(p.querySelectorAll('tbody tr')).forEach(tr=>{
       var jj=tr.getAttribute('data-j');
-      var sh=m==='all'?true:(jj==='PARTIAL'||jj==='EMPTY'||jj==='ERR');
+      var sh=m==='all'?true:(m==='bad'?(jj==='MISMATCH'):(jj==='PARTIAL'||jj==='EMPTY'||jj==='ERR'||jj==='MISMATCH'));
       tr.style.display=sh?'':'none';
     });
     Array.from(p.querySelectorAll('.__bf')).forEach(b=>{
