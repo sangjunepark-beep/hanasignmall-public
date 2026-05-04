@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.17 (catO+catT 풀통합) */
+/* 박스별 검수 v11.0.17.1 (catO+catT 풀통합) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -82,13 +82,27 @@ function propose(full,name){
     });
   });
   
-  // catT 박스 (SelOptCat2) - 각 박스에 추천 공간 add
+  // catT 박스: 5개 채울 때까지 (라벨 우선, 부족 시 sub 순서대로 fallback)
+  var TGT=5;
   Object.keys(bs2).forEach(k=>{
     var b=bs2[k];
+    var chk=b.items.filter(i=>i.dim==='05'&&i.checked).length;
+    if(chk>=TGT)return;
+    var added={};
+    // 1) stdSpc 라벨 매칭 우선
     stdSpc.forEach(lbl=>{
-      var it=b.items.find(i=>i.dim==='05'&&i.label===lbl&&!i.checked);
-      if(it)actions.push({type:'cat2',box:k,scodeOne:b.catX,catName:T_NAMES[b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
+      if(chk+Object.keys(added).length>=TGT)return;
+      var it=b.items.find(i=>i.dim==='05'&&i.label===lbl&&!i.checked&&!added[i.sub]);
+      if(it){added[it.sub]=1;actions.push({type:'cat2',box:k,scodeOne:b.catX,catName:T_NAMES[b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});}
     });
+    // 2) 부족하면 미체크 dim 05 sub 순서대로 fallback
+    if(chk+Object.keys(added).length<TGT){
+      b.items.filter(i=>i.dim==='05'&&!i.checked&&!added[i.sub]).forEach(it=>{
+        if(chk+Object.keys(added).length>=TGT)return;
+        added[it.sub]=1;
+        actions.push({type:'cat2',box:k,scodeOne:b.catX,catName:T_NAMES[b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
+      });
+    }
   });
   
   return {okCat1:ok1?ok1.k:null,actions:actions,recSpaces:stdSpc};
@@ -278,7 +292,7 @@ function render(){
     H+='</tr>';
   });
   H+='</tbody></table></div>';
-  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 카테고리 박스(상품별) D4=업종/D5=공간 / 🏢 업종별 박스 D5=공간 (3개 이상 OK) / 추가만 자동, 제거 X<span style="float:right">v11.0.17</span></div></div>';
+  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 카테고리 박스(상품별) D4=업종/D5=공간 / 🏢 업종별 박스 D5=공간 (3개 이상 OK) / 추가만 자동, 제거 X<span style="float:right">v11.0.17.1</span></div></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스타입','catX','이름','업종(체크/9)','공간 라벨','판정','추가 업종','추가 공간','자사몰 검증 URL'];
@@ -318,25 +332,4 @@ function render(){
     b.onclick=async function(){
       var idx=parseInt(b.getAttribute('data-fix'),10),r=res[idx];
       if(!r||!r.proposal)return;
-      b.textContent='...';b.disabled=true;
-      await runFix(r.rgr,r.proposal.actions);
-      var ar=await fetchAndAnalyze(r.rgr,r.name);
-      res[idx]=ar;render();
-    };
-  });
-  var bfa=document.getElementById('__bfa');
-  if(bfa)bfa.onclick=async function(){
-    if(!confirm('전체 '+totalAct+'개 자동수정 실행?'))return;
-    bfa.textContent='수정중...';bfa.disabled=true;
-    for(var k=0;k<res.length;k++){
-      var r=res[k];if(!r.proposal||r.proposal.actions.length===0)continue;
-      bfa.textContent='수정중 '+(k+1)+'/'+res.length;
-      await runFix(r.rgr,r.proposal.actions);
-      var ar=await fetchAndAnalyze(r.rgr,r.name);
-      res[k]=ar;
-    }
-    render();
-  };
-}
-render();
-})();
+    
