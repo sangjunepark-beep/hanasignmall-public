@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.18.4 (Sonnet + 부적합 자동 제거) */
+/* 박스별 검수 v11.0.18.5 (Sonnet + 부적합 자동 제거) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -345,10 +345,17 @@ function render(){
     if(prop.actions.length===0)pTxt='<span style="color:#888">변경 불필요</span>';
     else{
       var srcMark=prop.llmUsed?'🤖':'(룰)';
-      pTxt='<div style="font-size:11px">'+srcMark;
-      if(dN>0)pTxt+=' <span style="color:#d9534f;font-weight:bold">🚫제거 '+dN+'</span>';
-      if(aN>0)pTxt+=' <span style="color:#28a745">➕추가 '+aN+'</span>';
-      pTxt+='</div>';
+      var byBoxLine={};prop.actions.forEach(a=>{var k=a.op+'|'+a.type+'|'+a.box;if(!byBoxLine[k])byBoxLine[k]=[];byBoxLine[k].push(a);});
+      var lines=[srcMark+(dN>0?' <span style="color:#d9534f;font-weight:bold">🚫제거 '+dN+'</span>':'')+(aN>0?' <span style="color:#28a745">➕추가 '+aN+'</span>':'')];
+      Object.keys(byBoxLine).forEach(k=>{
+        var arr=byBoxLine[k],parts=k.split('|'),op=parts[0],t=parts[1];
+        var labels=arr.map(a=>a.optTxt);
+        var prefix=t==='cat1'?CAT_NAMES[arr[0].scodeOne]:T_NAMES[arr[0].scodeOne];
+        var icon=op==='del'?'<span style="color:#d9534f">🚫</span>':'<span style="color:#28a745">➕</span>';
+        if(arr[0].dim==='04'){lines.push('<div style="font-size:10px;color:#555;margin-top:2px">'+icon+' <b>'+prefix+'</b> 업종 '+labels.length+'개</div>');}
+        else{lines.push('<div style="font-size:10px;color:#555;margin-top:2px">'+icon+' <b>'+prefix+'</b>: '+labels.join(', ')+'</div>');}
+      });
+      pTxt='<div style="font-size:11px">'+lines.join('')+'</div>';
     }
     var fixBtn=prop.actions.length>0?'<button data-fix="'+i+'" class="__brfx" style="padding:5px 10px;background:'+(dN>0?'#d9534f':'#ffc107')+';color:'+(dN>0?'#fff':'#000')+';border:none;border-radius:3px;font-size:12px;cursor:pointer;font-weight:bold">'+(dN>0?'수정+제거':'수정')+' '+prop.actions.length+'</button>':'';
     H+='<tr data-j="'+j+'" data-idx="'+i+'" style="background:'+COL[j]+';border-bottom:1px solid #eee">';
@@ -362,7 +369,7 @@ function render(){
     H+='</tr>';
   });
   H+='</tbody></table></div>';
-  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO + 🏢 catT 둘 다 3개+ OK / 🚫 부적합(옥상 등) 자동 제거 / '+(LLM_ENABLED?'🤖 Sonnet 4.6':'룰')+'<span style="float:right">v11.0.18.4</span></div></div>';
+  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO + 🏢 catT 둘 다 3개+ OK / 🚫 부적합(옥상 등) 자동 제거 / '+(LLM_ENABLED?'🤖 Sonnet 4.6':'룰')+'<span style="float:right">v11.0.18.5</span></div></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스타입','catX','이름','업종','공간','부적합','판정','제거','추가','LLM','URL'];
