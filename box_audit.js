@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.18.3 (부적합 검증 + 옥상 등 거름) */
+/* 박스별 검수 v11.0.18.4 (Sonnet + 부적합 자동 제거) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -10,8 +10,6 @@ var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MIS
 var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠'};
 var CAT_NAMES={'01':'게시판','02':'안내판','04':'입간판','05':'현수막/배너','07':'구조물','08':'도로안전용품','09':'각종물품','10':'인쇄물/스티커','13':'개인결제'};
 var T_NAMES={'01':'학교/학원','02':'식당/카페','03':'아파트','04':'호텔/펜션','05':'병원/요양시설','06':'회사/공장','07':'공공기관','08':'헬스/레저','09':'기타업종'};
-
-// 사인물 일반 부적합 공간 (룰 기반 1차 검출)
 var BAD_SPACES=['옥상','수영장/사우나','수영장','사우나','키즈룸','화장실','독서실','골프연습장','헬스장'];
 function isBadSpace(label){return BAD_SPACES.indexOf(label)>=0;}
 
@@ -69,24 +67,15 @@ function rowJ(s1,s2){
 
 async function llmJudge(name,boxRequests){
   if(!KEY||boxRequests.length===0)return null;
-  var pt='하나사인몰 사인물 상품에 적합한 노출 공간을 박스별로 추천.\n\n';
-  pt+='상품명: "'+name+'"\n\n';
-  pt+='판단 원칙 (엄격):\n';
-  pt+='1. 진짜 적합한 공간만 선택. 5개 미만 OK. 절대 억지로 채우지 말 것.\n';
-  pt+='2. 사인물(입간판/안내판/표지판/스티커 등)은 사람 통행 위치에 설치:\n';
-  pt+='   - 입구, 주차장, 공용통로, 카운터, 출입구, 도로/인도, 건물외부\n';
-  pt+='3. 절대 부적합 (이런 곳에 사인물 안 둠):\n';
-  pt+='   - 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장\n';
-  pt+='   → 이런 곳은 추천 절대 X (룰 위반 시 작업 거부)\n';
-  pt+='4. 업종별 적합 공간:\n';
-  pt+='   - 학교/학원: 입구/교문, 주차장, 운동장, 공용통로, 도서관/문화시설\n';
-  pt+='   - 아파트: 입구, 주차장, 커뮤니티시설, 관리사무소, 엘리베이터\n';
-  pt+='   - 회사/공장: 정문, 주차장, 외부, 사무실 안내\n';
-  pt+='   - 병원/요양시설: 입구, 주차장, 외부\n';
-  pt+='\n박스별 가용 공간:\n';
+  var pt='하나사인몰 사인물 상품에 적합한 노출 공간을 박스별로 추천.\n\n상품명: "'+name+'"\n\n';
+  pt+='판단 원칙 (엄격):\n1. 진짜 적합한 공간만. 5개 미만 OK. 억지로 채우지 말 것.\n';
+  pt+='2. 사인물(입간판/안내판/표지판/스티커)은 사람 통행 위치: 입구, 주차장, 공용통로, 카운터, 도로/인도\n';
+  pt+='3. 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장 → 절대 추천 X\n';
+  pt+='4. 업종별: 학교(입구/주차장/운동장/공용통로) / 아파트(입구/주차장/커뮤니티/관리/엘리베이터) / 회사(정문/주차장/외부) / 병원(입구/주차장/외부)\n\n';
+  pt+='박스별 가용 공간:\n';
   boxRequests.forEach(r=>{pt+='- ['+r.label+'] 가용: ['+r.options.join(', ')+']\n';});
-  pt+='\n응답: JSON만, 적합한 라벨만 (5개 미만 OK, 옥상/수영장/화장실 등 절대 X)\n{\n';
-  boxRequests.forEach((r,i)=>{pt+='  "'+r.key+'": [...적합 라벨]'+(i<boxRequests.length-1?',':'')+'\n';});
+  pt+='\n응답: JSON만, 적합한 라벨만 (5개 미만 OK)\n{\n';
+  boxRequests.forEach((r,i)=>{pt+='  "'+r.key+'": [...]'+(i<boxRequests.length-1?',':'')+'\n';});
   pt+='}';
   try{
     var r=await fetch('https://api.anthropic.com/v1/messages',{
@@ -113,12 +102,29 @@ async function propose(full,name){
   var arr1=Object.keys(bs1).map(k=>({k:k,b:bs1[k]}));
   var normal1=arr1.filter(x=>hO.indexOf(x.b.catX)>=0);
   var stdInd=['04-01','04-02','04-03','04-04','04-05','04-06','04-07','04-08','04-09'];
+  
+  // 부적합 제거 actions 먼저
+  normal1.forEach(x=>{
+    x.b.items.filter(i=>i.dim==='05'&&i.checked&&isBadSpace(i.label)).forEach(it=>{
+      actions.push({op:'del',type:'cat1',box:x.k,scodeOne:x.b.catX,catName:CAT_NAMES[x.b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
+    });
+  });
+  Object.keys(bs2).forEach(k=>{
+    var b=bs2[k];
+    b.items.filter(i=>i.dim==='05'&&i.checked&&isBadSpace(i.label)).forEach(it=>{
+      actions.push({op:'del',type:'cat2',box:k,scodeOne:b.catX,catName:T_NAMES[b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
+    });
+  });
+  
+  // catO 업종 9개 add
   normal1.forEach(x=>{
     stdInd.forEach(sub=>{
       var it=x.b.items.find(i=>i.sub===sub&&!i.checked);
-      if(it)actions.push({type:'cat1',box:x.k,scodeOne:x.b.catX,catName:CAT_NAMES[x.b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
+      if(it)actions.push({op:'add',type:'cat1',box:x.k,scodeOne:x.b.catX,catName:CAT_NAMES[x.b.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
     });
   });
+  
+  // 공간 추천 박스 list (LLM)
   var boxReqs=[];
   normal1.forEach(x=>{
     var chk=x.b.items.filter(i=>i.dim==='05'&&i.checked&&!isBadSpace(i.label)).length;
@@ -144,13 +150,13 @@ async function propose(full,name){
       picks.slice(0,5).forEach(lbl=>{
         if(isBadSpace(lbl))return;
         var it=req.box.items.find(i=>i.dim==='05'&&i.label===lbl&&!i.checked&&!added[i.sub]);
-        if(it){added[it.sub]=1;actions.push({type:req.type,box:req.key,scodeOne:req.catX,catName:(req.type==='cat1'?CAT_NAMES:T_NAMES)[req.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});}
+        if(it){added[it.sub]=1;actions.push({op:'add',type:req.type,box:req.key,scodeOne:req.catX,catName:(req.type==='cat1'?CAT_NAMES:T_NAMES)[req.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});}
       });
     } else if(!llmResult){
       req.box.items.filter(i=>i.dim==='05'&&!i.checked&&!isBadSpace(i.label)&&!added[i.sub]).forEach(it=>{
         if(Object.keys(added).length>=req.need)return;
         added[it.sub]=1;
-        actions.push({type:req.type,box:req.key,scodeOne:req.catX,catName:(req.type==='cat1'?CAT_NAMES:T_NAMES)[req.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
+        actions.push({op:'add',type:req.type,box:req.key,scodeOne:req.catX,catName:(req.type==='cat1'?CAT_NAMES:T_NAMES)[req.catX]||'?',optType:it.optType,optCode:it.sub,optTxt:it.label,dim:it.dim});
       });
     }
   });
@@ -163,7 +169,8 @@ async function runFix(rgr,actions){
   for(var i=0;i<actions.length;i+=5){
     var ck=actions.slice(i,i+5);
     var arr=await Promise.all(ck.map(a=>{
-      var u='/AdminManager/SelectCateCode.php?SelCateTab=AM_Gs_CaReg&SelSeaTab=AM_Gs_SeaDef&nMode=RegOptSelect&GoodsNum=1&RegCode='+rgr+'&ScodeOne='+a.scodeOne+'&OptTypeNum='+a.optType+'&OptCode='+a.optCode+'&OptTxt='+encodeURIComponent(a.optTxt);
+      var mode=a.op==='del'?'DelOptSelect':'RegOptSelect';
+      var u='/AdminManager/SelectCateCode.php?SelCateTab=AM_Gs_CaReg&SelSeaTab=AM_Gs_SeaDef&nMode='+mode+'&GoodsNum=1&RegCode='+rgr+'&ScodeOne='+a.scodeOne+'&OptTypeNum='+a.optType+'&OptCode='+a.optCode+'&OptTxt='+encodeURIComponent(a.optTxt);
       return fetch(u,{credentials:'include'}).then(r=>r.ok?1:0).catch(()=>0);
     }));
     arr.forEach(v=>{ok+=v;});
@@ -217,13 +224,13 @@ function attachCtrls(){
   var hdr=p.querySelector('.__bhdr');if(hdr)makeDraggable(hdr);
 }
 var hdrCtrls='<button id="__bmn" style="padding:7px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:14px">—</button><button id="__bcl" style="padding:7px 16px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:14px">닫기 X</button>';
-var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 Sonnet 4.6</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰 모드</span>';
+var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 Sonnet 4.6</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰</span>';
 
 function spcText(items){return (!items||items.length===0)?'없음':items.map(i=>i.label).join(', ');}
-function spcTextBad(items,badList){
+function spcTextBad(items,bad){
   if(!items||items.length===0)return '없음';
-  var badSubs={};(badList||[]).forEach(b=>{badSubs[b.sub]=1;});
-  return items.map(i=>badSubs[i.sub]?'<span style="color:#d9534f;font-weight:bold">⚠'+i.label+'</span>':i.label).join(', ');
+  var ds={};(bad||[]).forEach(b=>{ds[b.sub]=1;});
+  return items.map(i=>ds[i.sub]?'<span style="color:#d9534f;font-weight:bold">⚠'+i.label+'</span>':i.label).join(', ');
 }
 
 p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'Sonnet 판단 중':'룰 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
@@ -235,33 +242,32 @@ if(isE){
   var full=analyzeFull(document),s1=summarize1(full.boxes1,full.hidO),s2=summarize2(full.boxes2);
   var prop=await propose(full,nm);
   var j=rowJ(s1,s2);
-  var allBads=[];s1.concat(s2).forEach(b=>{(b.bad||[]).forEach(x=>allBads.push(b.catX+' '+b.catName+': '+x.label));});
-  var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:bold">📋 통합 검수 - '+rgr+llmBadge+'</div><div style="font-size:14px;opacity:.85">'+(nm||'(없음)')+' · '+ICO[j]+' '+KOR[j]+(allBads.length>0?' · 🚫 부적합 '+allBads.length+'개':'')+'</div></div><div style="display:flex;gap:6px">'+(prop.actions.length>0?'<button id="__bfx" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:14px">자동수정 '+prop.actions.length+'</button>':'')+hdrCtrls+'</div></div>';
+  var delN=prop.actions.filter(a=>a.op==='del').length;
+  var addN=prop.actions.filter(a=>a.op==='add').length;
+  var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:bold">📋 통합 검수 - '+rgr+llmBadge+'</div><div style="font-size:14px;opacity:.85">'+(nm||'(없음)')+' · '+ICO[j]+' '+KOR[j]+' · 🚫제거 '+delN+' · ➕추가 '+addN+'</div></div><div style="display:flex;gap:6px">'+(prop.actions.length>0?'<button id="__bfx" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:14px">자동수정 '+prop.actions.length+'</button>':'')+hdrCtrls+'</div></div>';
   H+='<div class="__bbody" style="padding:14px;overflow:auto;flex:1">';
-  if(allBads.length>0){
-    H+='<div style="background:#ffe0e0;border-left:5px solid #d9534f;padding:10px;margin-bottom:10px;border-radius:4px"><b>🚫 부적합 공간 발견 ('+allBads.length+'개)</b><div style="font-size:12px;color:#a00;margin-top:4px">사인물에 부적합한 위치(옥상/화장실/수영장 등) 체크되어 있음. 사람 검수 후 어드민에서 직접 해제 필요 (자동 제거 X).</div><div style="font-size:11px;margin-top:6px">'+allBads.join(' / ')+'</div></div>';
-  }
-  H+='<h4 style="margin:6px 0">📦 카테고리(상품별) 박스</h4>';
+  H+='<h4 style="margin:6px 0">📦 카테고리 박스</h4>';
   H+='<table style="border-collapse:collapse;width:100%;font-size:13px;margin-bottom:10px"><thead><tr style="background:#5b9bd5;color:#fff"><th style="padding:6px">카테고리</th><th>업종</th><th>공간</th><th>판정</th></tr></thead><tbody>';
   s1.forEach(x=>{
     H+='<tr style="background:'+COL[x.judge]+'"><td style="padding:6px;font-weight:bold">'+x.catX+' '+x.catName+'</td><td style="text-align:center"><b>'+x.d4+'/9</b></td><td>'+spcTextBad(x.d5items,x.bad)+'</td><td style="text-align:center;font-weight:bold">'+ICO[x.judge]+' '+KOR[x.judge]+'</td></tr>';
   });
   H+='</tbody></table>';
-  H+='<h4 style="margin:6px 0">🏢 업종별 박스 (3개+ OK, 부적합 0)</h4>';
+  H+='<h4 style="margin:6px 0">🏢 업종별 박스</h4>';
   H+='<table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr style="background:#70ad47;color:#fff"><th style="padding:6px">업종</th><th>공간</th><th>판정</th></tr></thead><tbody>';
   s2.forEach(x=>{
-    H+='<tr style="background:'+COL[x.judge]+'"><td style="padding:6px;font-weight:bold">'+x.catX+' '+x.catName+'</td><td>'+spcTextBad(x.d5items,x.bad)+' ('+x.d5+'개'+(x.bad.length?', 부적합 '+x.bad.length:'')+')</td><td style="text-align:center;font-weight:bold">'+ICO[x.judge]+' '+KOR[x.judge]+'</td></tr>';
+    H+='<tr style="background:'+COL[x.judge]+'"><td style="padding:6px;font-weight:bold">'+x.catX+' '+x.catName+'</td><td>'+spcTextBad(x.d5items,x.bad)+'</td><td style="text-align:center;font-weight:bold">'+ICO[x.judge]+' '+KOR[x.judge]+'</td></tr>';
   });
   H+='</tbody></table>';
   if(prop.actions.length>0){
-    var byBox={};prop.actions.forEach(a=>{var k=a.type+'|'+a.box;if(!byBox[k])byBox[k]=[];byBox[k].push(a);});
-    H+='<div style="margin-top:12px;padding:12px;background:#fff3cd;border-left:5px solid #ffc107;border-radius:4px"><b>📝 '+(prop.llmUsed?'🤖 Sonnet 4.6 판단':'룰')+' 추가 제안 ('+prop.actions.length+'개)</b>';
+    var byBox={};prop.actions.forEach(a=>{var k=a.op+'|'+a.type+'|'+a.box;if(!byBox[k])byBox[k]=[];byBox[k].push(a);});
+    H+='<div style="margin-top:12px;padding:12px;background:#fff3cd;border-left:5px solid #ffc107;border-radius:4px"><b>📝 자동수정 ('+prop.actions.length+'개): 🚫제거 '+delN+' + ➕추가 '+addN+'</b>';
     Object.keys(byBox).forEach(k=>{
-      var arr=byBox[k],t=k.split('|')[0];
-      var ind=arr.filter(a=>a.dim==='04').map(a=>a.optTxt);
+      var arr=byBox[k],parts=k.split('|'),op=parts[0],t=parts[1];
       var spc=arr.filter(a=>a.dim==='05').map(a=>a.optTxt);
+      var ind=arr.filter(a=>a.dim==='04').map(a=>a.optTxt);
       var label=t==='cat1'?'카테고리 '+arr[0].scodeOne+' '+arr[0].catName:'업종 '+arr[0].scodeOne+' '+arr[0].catName;
-      H+='<div style="margin-top:6px;padding:6px 8px;background:#fff;border-radius:3px"><b>'+label+'</b>';
+      var icon=op==='del'?'🚫제거':'➕추가';
+      H+='<div style="margin-top:6px;padding:6px 8px;background:#fff;border-radius:3px"><b>'+icon+' '+label+'</b>';
       if(ind.length)H+=' / 업종 '+ind.length+'개';
       if(spc.length)H+=' / 공간: '+spc.join(', ');
       H+='</div>';
@@ -272,6 +278,7 @@ if(isE){
   p.innerHTML=H;attachCtrls();
   var bfx=document.getElementById('__bfx');
   if(bfx)bfx.onclick=async function(){
+    if(!confirm('자동수정 실행?\n🚫 제거 '+delN+'개 + ➕ 추가 '+addN+'개'))return;
     bfx.textContent='수정중...';bfx.disabled=true;
     var r=await runFix(rgr,prop.actions);
     bfx.textContent='완료 '+r.success+'/'+r.total;
@@ -296,7 +303,7 @@ var res=[];
 for(var i=0;i<rgrs.length;i++){
   var o=rgrs[i];
   res.push(await fetchAndAnalyze(o.rgr,o.name));
-  var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent=res.length+' / '+rgrs.length+(LLM_ENABLED?' (Haiku)':'');
+  var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent=res.length+' / '+rgrs.length+(LLM_ENABLED?' (Sonnet)':'');
 }
 window.__bapResults=res;
 
@@ -304,43 +311,46 @@ function render(){
   var st={OK:0,PARTIAL:0,EMPTY:0,MISMATCH:0,ERR:0};
   res.forEach(r=>{if(r.err)st.ERR++;else st[rowJ(r.s1,r.s2)]++;});
   var totalAct=res.reduce((s,r)=>s+(r.proposal?r.proposal.actions.length:0),0);
+  var totalDel=res.reduce((s,r)=>s+(r.proposal?r.proposal.actions.filter(a=>a.op==='del').length:0),0);
+  var totalAdd=totalAct-totalDel;
   var llmCount=res.filter(r=>r.proposal&&r.proposal.llmUsed).length;
   var cat=(url.match(/CodeT1_1=([^&]+)/)||[])[1]||'?';
   var pg=(url.match(/page=(\d+)/)||[])[1]||'1';
   var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">';
   H+='<div><div style="font-size:18px;font-weight:bold">📋 통합 검수 - '+res.length+'건'+llmBadge+'</div>';
   H+='<div style="font-size:13px;opacity:.85;margin-top:3px">'+(CAT_NAMES[cat]||'?')+'('+cat+') / '+pg+'p / 정상 '+st.OK+' / 일부부족 '+st.PARTIAL+' / 미설정 '+st.EMPTY;
-  if(st.MISMATCH)H+=' / 🚫 부적합포함 '+st.MISMATCH;
+  if(st.MISMATCH)H+=' / 🚫부적합 '+st.MISMATCH;
   if(st.ERR)H+=' / 에러 '+st.ERR;
-  H+=' / 추가 '+totalAct+'개';
+  H+=' / 🚫제거 '+totalDel+' / ➕추가 '+totalAdd;
   if(LLM_ENABLED)H+=' / 🤖 '+llmCount+'/'+res.length;
   H+='</div></div>';
   H+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
   H+='<button data-f="all" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#fff;color:#305496;font-size:13px">전체</button>';
   H+='<button data-f="fix" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:13px">수정필요</button>';
-  H+='<button data-f="bad" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:13px">🚫 부적합만</button>';
+  H+='<button data-f="bad" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:13px">🚫부적합</button>';
   if(totalAct>0)H+='<button id="__bfa" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:13px">전체 자동수정 '+totalAct+'</button>';
   H+='<button id="__bxl" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#28a745;color:#fff;font-size:13px">엑셀</button>';
   H+=hdrCtrls+'</div></div>';
-  H+='<div class="__bbody" style="overflow:auto;flex:1;display:flex;flex-direction:column"><div style="overflow:auto;flex:1"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr style="background:#5b9bd5;color:#fff;position:sticky;top:0"><th style="padding:8px;width:30px">#</th><th style="text-align:left;min-width:170px">상품</th><th style="text-align:left;min-width:280px">📦 카테고리</th><th style="text-align:left;min-width:280px">🏢 업종별</th><th style="width:100px">판정</th><th style="text-align:left;min-width:200px">제안</th><th style="width:140px">액션</th></tr></thead><tbody>';
+  H+='<div class="__bbody" style="overflow:auto;flex:1;display:flex;flex-direction:column"><div style="overflow:auto;flex:1"><table style="border-collapse:collapse;width:100%;font-size:12px"><thead><tr style="background:#5b9bd5;color:#fff;position:sticky;top:0"><th style="padding:8px;width:30px">#</th><th style="text-align:left;min-width:160px">상품</th><th style="text-align:left;min-width:260px">📦 카테고리</th><th style="text-align:left;min-width:280px">🏢 업종별</th><th style="width:100px">판정</th><th style="text-align:left;min-width:200px">제안</th><th style="width:160px">액션</th></tr></thead><tbody>';
   res.forEach((r,i)=>{
     if(r.err){H+='<tr data-j="ERR" style="background:'+COL.ERR+'"><td colspan=7 style="padding:6px">에러 '+r.rgr+': '+r.err+'</td></tr>';return;}
     var j=rowJ(r.s1,r.s2);
     var el='https://ad.hanasm.kr/AdminManager/MakeGoodsTypeOneDp.php?RgrCode='+r.rgr+'&EditMode=1';
     var s1Html=r.s1.map(b=>'<div style="background:'+COL[b.judge]+';padding:3px 6px;margin:1px 0;border-radius:3px;font-size:11px">'+ICO[b.judge]+' <b>'+b.catX+' '+b.catName+'</b>: 업종 '+b.d4+'/9, 공간 '+b.d5+(b.bad.length?' (🚫'+b.bad.length+')':'')+'</div>').join('');
-    var s2Html=r.s2.map(b=>{
-      var sp=b.d5items.length?spcTextBad(b.d5items,b.bad).slice(0,80):'(없음)';
-      return '<div style="background:'+COL[b.judge]+';padding:3px 6px;margin:1px 0;border-radius:3px;font-size:11px">'+ICO[b.judge]+' <b>'+b.catX+' '+b.catName+'</b>: '+b.d5+'개'+(b.bad.length?' (🚫'+b.bad.length+')':'')+'</div>';
-    }).join('');
+    var s2Html=r.s2.map(b=>'<div style="background:'+COL[b.judge]+';padding:3px 6px;margin:1px 0;border-radius:3px;font-size:11px">'+ICO[b.judge]+' <b>'+b.catX+' '+b.catName+'</b>: '+b.d5+'개'+(b.bad.length?' (🚫'+b.bad.length+')':'')+'</div>').join('');
     var prop=r.proposal||{actions:[]};
+    var dN=prop.actions.filter(a=>a.op==='del').length;
+    var aN=prop.actions.filter(a=>a.op==='add').length;
     var pTxt='';
-    if(prop.actions.length===0)pTxt='<span style="color:#888">추가 불필요</span>';
+    if(prop.actions.length===0)pTxt='<span style="color:#888">변경 불필요</span>';
     else{
-      var byT={cat1:0,cat2:0};prop.actions.forEach(a=>{byT[a.type]++;});
       var srcMark=prop.llmUsed?'🤖':'(룰)';
-      pTxt='<div style="font-size:11px">'+srcMark+' 카테고리 +'+byT.cat1+' / 업종 +'+byT.cat2+'</div>';
+      pTxt='<div style="font-size:11px">'+srcMark;
+      if(dN>0)pTxt+=' <span style="color:#d9534f;font-weight:bold">🚫제거 '+dN+'</span>';
+      if(aN>0)pTxt+=' <span style="color:#28a745">➕추가 '+aN+'</span>';
+      pTxt+='</div>';
     }
-    var fixBtn=prop.actions.length>0?'<button data-fix="'+i+'" class="__brfx" style="padding:5px 10px;background:#ffc107;color:#000;border:none;border-radius:3px;font-size:12px;cursor:pointer;font-weight:bold">수정 '+prop.actions.length+'</button>':'';
+    var fixBtn=prop.actions.length>0?'<button data-fix="'+i+'" class="__brfx" style="padding:5px 10px;background:'+(dN>0?'#d9534f':'#ffc107')+';color:'+(dN>0?'#fff':'#000')+';border:none;border-radius:3px;font-size:12px;cursor:pointer;font-weight:bold">'+(dN>0?'수정+제거':'수정')+' '+prop.actions.length+'</button>':'';
     H+='<tr data-j="'+j+'" data-idx="'+i+'" style="background:'+COL[j]+';border-bottom:1px solid #eee">';
     H+='<td style="padding:6px;text-align:center;color:#666">'+(i+1)+'</td>';
     H+='<td style="padding:6px"><div style="font-family:monospace;font-size:10px;color:#666">'+r.rgr+'</div><div style="font-size:13px">'+(r.name||'').slice(0,40)+'</div></td>';
@@ -352,26 +362,28 @@ function render(){
     H+='</tr>';
   });
   H+='</tbody></table></div>';
-  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO + 🏢 catT 둘 다 3개+ OK / 🚫 부적합(옥상/수영장/화장실 등) 발견 시 사람 검수 / '+(LLM_ENABLED?'🤖 Sonnet 4.6':'룰')+'<span style="float:right">v11.0.18.3</span></div></div>';
+  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO + 🏢 catT 둘 다 3개+ OK / 🚫 부적합(옥상 등) 자동 제거 / '+(LLM_ENABLED?'🤖 Sonnet 4.6':'룰')+'<span style="float:right">v11.0.18.4</span></div></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
-    var hdr=['#','상품코드','상품명','박스타입','catX','이름','업종','공간','부적합','판정','추가업종','추가공간','LLM','URL'];
+    var hdr=['#','상품코드','상품명','박스타입','catX','이름','업종','공간','부적합','판정','제거','추가','LLM','URL'];
     var data=[hdr];var n=0;
     res.forEach((r,i)=>{
       if(r.err){data.push([i+1,r.rgr,r.name||'','','','','','','','에러','','','','']);return;}
       var prop=r.proposal||{actions:[]};
-      var byBox={};prop.actions.forEach(a=>{var k=a.type+'|'+a.box;if(!byBox[k])byBox[k]=[];byBox[k].push(a);});
+      var byBox={};prop.actions.forEach(a=>{var k=a.op+'|'+a.type+'|'+a.box;if(!byBox[k])byBox[k]=[];byBox[k].push(a);});
       r.s1.forEach(b=>{
-        n++;var ad=byBox['cat1|'+b.box]||[];
-        var ai=ad.filter(a=>a.dim==='04').length,as=ad.filter(a=>a.dim==='05').map(a=>a.optTxt).join(', ')||'-';
+        n++;
+        var dl=(byBox['del|cat1|'+b.box]||[]).map(a=>a.optTxt).join(', ')||'-';
+        var ad=(byBox['add|cat1|'+b.box]||[]).filter(a=>a.dim==='05').map(a=>a.optTxt).join(', ')||'-';
         var bad=b.bad.map(x=>x.label).join(', ')||'-';
-        data.push([n,r.rgr,r.name||'','catO',b.catX,b.catName,b.d4+'/9',spcText(b.d5items)||'없음',bad,KOR[b.judge],ai,as,prop.llmUsed?'Y':'N','https://www.hanasignmall.kr/Search.php?GetSearch='+r.rgr+'&CCode='+b.catX+'&CateCou=1']);
+        data.push([n,r.rgr,r.name||'','catO',b.catX,b.catName,b.d4+'/9',spcText(b.d5items)||'없음',bad,KOR[b.judge],dl,ad,prop.llmUsed?'Y':'N','https://www.hanasignmall.kr/Search.php?GetSearch='+r.rgr+'&CCode='+b.catX+'&CateCou=1']);
       });
       r.s2.forEach(b=>{
-        n++;var ad=byBox['cat2|'+b.box]||[];
-        var as=ad.filter(a=>a.dim==='05').map(a=>a.optTxt).join(', ')||'-';
+        n++;
+        var dl=(byBox['del|cat2|'+b.box]||[]).map(a=>a.optTxt).join(', ')||'-';
+        var ad=(byBox['add|cat2|'+b.box]||[]).filter(a=>a.dim==='05').map(a=>a.optTxt).join(', ')||'-';
         var bad=b.bad.map(x=>x.label).join(', ')||'-';
-        data.push([n,r.rgr,r.name||'','catT',b.catX,b.catName,'-',spcText(b.d5items)||'없음',bad,KOR[b.judge],'-',as,prop.llmUsed?'Y':'N','https://www.hanasignmall.kr/shop/DisplayList.php?CCode='+b.catX+'&CateType=2']);
+        data.push([n,r.rgr,r.name||'','catT',b.catX,b.catName,'-',spcText(b.d5items)||'없음',bad,KOR[b.judge],dl,ad,prop.llmUsed?'Y':'N','https://www.hanasignmall.kr/shop/DisplayList.php?CCode='+b.catX+'&CateType=2']);
       });
     });
     downloadCSV(data,'통합검수_'+(CAT_NAMES[cat]||cat)+'_p'+pg+'.csv');
@@ -400,7 +412,7 @@ function render(){
   });
   var bfa=document.getElementById('__bfa');
   if(bfa)bfa.onclick=async function(){
-    if(!confirm('전체 '+totalAct+'개 자동수정?'))return;
+    if(!confirm('전체 '+totalAct+'개 (🚫제거 '+totalDel+' + ➕추가 '+totalAdd+') 자동수정?'))return;
     bfa.textContent='수정중...';bfa.disabled=true;
     for(var k=0;k<res.length;k++){
       var r=res[k];if(!r.proposal||r.proposal.actions.length===0)continue;
