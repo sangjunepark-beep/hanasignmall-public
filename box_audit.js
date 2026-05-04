@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.18.2 (부적합 검증 + 옥상 등 거름) */
+/* 박스별 검수 v11.0.18.3 (부적합 검증 + 옥상 등 거름) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -92,7 +92,7 @@ async function llmJudge(name,boxRequests){
     var r=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
       headers:{'x-api-key':KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','content-type':'application/json'},
-      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:2000,messages:[{role:'user',content:pt}]})
+      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages:[{role:'user',content:pt}]})
     });
     var j=await r.json();
     if(!j.content||!j.content[0])return null;
@@ -217,7 +217,7 @@ function attachCtrls(){
   var hdr=p.querySelector('.__bhdr');if(hdr)makeDraggable(hdr);
 }
 var hdrCtrls='<button id="__bmn" style="padding:7px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:14px">—</button><button id="__bcl" style="padding:7px 16px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:14px">닫기 X</button>';
-var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 Haiku</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰 모드</span>';
+var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 Sonnet 4.6</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰 모드</span>';
 
 function spcText(items){return (!items||items.length===0)?'없음':items.map(i=>i.label).join(', ');}
 function spcTextBad(items,badList){
@@ -226,7 +226,7 @@ function spcTextBad(items,badList){
   return items.map(i=>badSubs[i.sub]?'<span style="color:#d9534f;font-weight:bold">⚠'+i.label+'</span>':i.label).join(', ');
 }
 
-p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'Haiku 판단 중':'룰 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
+p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'Sonnet 판단 중':'룰 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
 attachCtrls();
 
 if(isE){
@@ -255,7 +255,7 @@ if(isE){
   H+='</tbody></table>';
   if(prop.actions.length>0){
     var byBox={};prop.actions.forEach(a=>{var k=a.type+'|'+a.box;if(!byBox[k])byBox[k]=[];byBox[k].push(a);});
-    H+='<div style="margin-top:12px;padding:12px;background:#fff3cd;border-left:5px solid #ffc107;border-radius:4px"><b>📝 '+(prop.llmUsed?'🤖 Haiku 판단':'룰')+' 추가 제안 ('+prop.actions.length+'개)</b>';
+    H+='<div style="margin-top:12px;padding:12px;background:#fff3cd;border-left:5px solid #ffc107;border-radius:4px"><b>📝 '+(prop.llmUsed?'🤖 Sonnet 4.6 판단':'룰')+' 추가 제안 ('+prop.actions.length+'개)</b>';
     Object.keys(byBox).forEach(k=>{
       var arr=byBox[k],t=k.split('|')[0];
       var ind=arr.filter(a=>a.dim==='04').map(a=>a.optTxt);
@@ -352,7 +352,7 @@ function render(){
     H+='</tr>';
   });
   H+='</tbody></table></div>';
-  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO + 🏢 catT 둘 다 3개+ OK / 🚫 부적합(옥상/수영장/화장실 등) 발견 시 사람 검수 / '+(LLM_ENABLED?'🤖 Haiku':'룰')+'<span style="float:right">v11.0.18.2</span></div></div>';
+  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO + 🏢 catT 둘 다 3개+ OK / 🚫 부적합(옥상/수영장/화장실 등) 발견 시 사람 검수 / '+(LLM_ENABLED?'🤖 Sonnet 4.6':'룰')+'<span style="float:right">v11.0.18.3</span></div></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스타입','catX','이름','업종','공간','부적합','판정','추가업종','추가공간','LLM','URL'];
