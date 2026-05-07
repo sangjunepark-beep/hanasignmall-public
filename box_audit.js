@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.27 (키 매핑 fallback (label 매칭) + key 강제 프롬프트) */
+/* 박스별 검수 v11.0.28 (판정 보강: LLM OK + 박스 부적합 DROP 인정) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -6,10 +6,10 @@ var KEY=localStorage.getItem('__ANTHROPIC_KEY');
 if(!KEY){KEY=prompt('Claude API Key:');if(KEY)localStorage.setItem('__ANTHROPIC_KEY',KEY);}
 var LLM_ENABLED=!!KEY;
 window.__bapDebug={llmCalls:[],errors:[]};
-console.log('[bap] v11.0.27 시작 LLM_ENABLED=',LLM_ENABLED);
-var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',MISMATCH:'#ffd6d6',ERR:'#fadbd8'};
-var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MISMATCH:'부적합포함',ERR:'에러'};
-var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠'};
+console.log('[bap] v11.0.28 시작 LLM_ENABLED=',LLM_ENABLED);
+var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',MISMATCH:'#ffd6d6',ERR:'#fadbd8',DROP:'#e8e8e8'};
+var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MISMATCH:'부적합포함',ERR:'에러',DROP:'박스부적합'};
+var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠',DROP:'🗑️'};
 var CAT_NAMES={'01':'게시판','02':'안내판','04':'입간판','05':'현수막/배너','07':'구조물','08':'도로안전용품','09':'각종물품','10':'인쇄물/스티커','13':'개인결제'};
 var T_NAMES={'01':'학교/학원','02':'식당/카페','03':'아파트','04':'호텔/펜션','05':'병원/요양시설','06':'회사/공장','07':'공공기관','08':'헬스/레저','09':'기타업종'};
 var BAD_SPACES=['옥상','수영장/사우나','수영장','사우나','키즈룸','화장실','독서실','골프연습장','헬스장'];
@@ -49,11 +49,13 @@ function summarize(boxes,kind,hO){
 }
 
 function rowJ(s1,s2){
-  var r1=s1.filter(b=>!b.ghost);
-  if(r1.some(b=>b.judge==='MISMATCH')||s2.some(b=>b.judge==='MISMATCH'))return 'MISMATCH';
-  var allOK=r1.length>0&&r1.every(b=>b.judge==='OK')&&s2.every(b=>b.judge==='OK');
+  var r1=s1.filter(b=>!b.ghost && b.judge!=='DROP');
+  var r2=s2.filter(b=>b.judge!=='DROP');
+  if(r1.some(b=>b.judge==='MISMATCH')||r2.some(b=>b.judge==='MISMATCH'))return 'MISMATCH';
+  if(r1.length===0&&r2.length===0)return 'OK';
+  var allOK=r1.every(b=>b.judge==='OK')&&r2.every(b=>b.judge==='OK');
   if(allOK)return 'OK';
-  if(r1.some(b=>b.judge==='EMPTY')||s2.some(b=>b.judge==='EMPTY'))return 'EMPTY';
+  if(r1.some(b=>b.judge==='EMPTY')||r2.some(b=>b.judge==='EMPTY'))return 'EMPTY';
   return 'PARTIAL';
 }
 
@@ -331,6 +333,20 @@ async function fetchAndAnalyze(rgr,name){
     var s1=summarize(full.boxes1,'cat1',full.hidO);
     var s2=summarize(full.boxes2,'cat2',null);
     var planResult=await buildPlan(s1,s2,nm);
+    // LLM 결과 반영해서 박스 judge 후처리
+    if(planResult.llmUsed){
+      planResult.plans.forEach(p=>{
+        var arr=p.kind==='cat1'?s1:s2;
+        var box=arr.find(b=>b.box===p.box);
+        if(!box||box.ghost)return;
+        if(box.judge==='MISMATCH')return; // 부적합 그대로
+        if(p.current.length>0 && p.result.length===0){
+          box.judge='DROP';p.judge='DROP'; // 빈 박스 = 박스 자체 부적합
+        } else if(p.result.length>=1){
+          box.judge='OK';p.judge='OK'; // LLM 결과 1개라도 있으면 OK
+        }
+      });
+    }
     var actions=plansToActions(planResult.plans,planResult.indActions);
     return {rgr:rgr,name:nm,s1:s1,s2:s2,plans:planResult.plans,actions:actions,llmUsed:planResult.llmUsed};
   }catch(e){return {rgr:rgr,name:name,err:String(e).slice(0,40)};}
@@ -401,12 +417,13 @@ var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px
 
 function renderBoxCard(plan){
   var changed=plan.remove.length>0||plan.add.length>0;
-  var bgC=plan.judge==='OK'&&!changed?'#e8f5e9':(plan.remove.length>0?'#ffe0e0':(plan.add.length>0?'#fff8dc':'#f5f5f5'));
+  var bgC=plan.judge==='DROP'?'#e8e8e8':(plan.judge==='OK'&&!changed?'#e8f5e9':(plan.remove.length>0?'#ffe0e0':(plan.add.length>0?'#fff8dc':'#f5f5f5')));
   var icon=plan.kind==='cat1'?'📦':'🏢';
   var prefix=plan.kind==='cat1'?'카테고리':'업종';
   var H='<div style="border:1px solid #ccc;border-radius:6px;padding:10px;margin:6px 0;background:'+bgC+';font-size:13px">';
   H+='<div style="font-weight:bold;font-size:14px;margin-bottom:6px">'+icon+' '+prefix+' '+plan.catX+' '+plan.catName+'</div>';
   H+='<div style="margin:3px 0"><b style="color:#666;display:inline-block;width:60px">현재:</b> '+(plan.current.length?plan.current.join(', '):'<span style="color:#999">없음</span>')+'</div>';
+  if(plan.judge==='DROP')H+='<div style="margin:3px 0;color:#666;font-style:italic;border-top:1px dashed #aaa;padding-top:4px">🗑️ <b>박스 부적합</b> — LLM 판정상 이 카테고리에 노출 부적합. 매핑 해제는 수동 권장.</div>';
   if(plan.remove.length>0)H+='<div style="margin:3px 0;color:#d9534f"><b style="display:inline-block;width:60px">❌ 제거:</b> '+plan.remove.join(', ')+'</div>';
   if(plan.add.length>0)H+='<div style="margin:3px 0;color:#28a745"><b style="display:inline-block;width:60px">➕ 추가:</b> '+plan.add.join(', ')+'</div>';
   if(changed)H+='<div style="margin:3px 0;color:#1565c0;font-weight:bold;border-top:1px dashed #aaa;padding-top:4px"><b style="display:inline-block;width:60px">⇒ 결과:</b> '+(plan.result.length?plan.result.join(', '):'<span style="color:#999">없음</span>')+'</div>';
@@ -512,7 +529,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.27</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.28</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
