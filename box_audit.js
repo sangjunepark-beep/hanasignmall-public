@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.28 (판정 보강: LLM OK + 박스 부적합 DROP 인정) */
+/* 박스별 검수 v11.0.29 (DROP 조건 수정 (current 0이어도 result 0이면 DROP)) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -6,7 +6,7 @@ var KEY=localStorage.getItem('__ANTHROPIC_KEY');
 if(!KEY){KEY=prompt('Claude API Key:');if(KEY)localStorage.setItem('__ANTHROPIC_KEY',KEY);}
 var LLM_ENABLED=!!KEY;
 window.__bapDebug={llmCalls:[],errors:[]};
-console.log('[bap] v11.0.28 시작 LLM_ENABLED=',LLM_ENABLED);
+console.log('[bap] v11.0.29 시작 LLM_ENABLED=',LLM_ENABLED);
 var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',MISMATCH:'#ffd6d6',ERR:'#fadbd8',DROP:'#e8e8e8'};
 var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MISMATCH:'부적합포함',ERR:'에러',DROP:'박스부적합'};
 var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠',DROP:'🗑️'};
@@ -340,9 +340,9 @@ async function fetchAndAnalyze(rgr,name){
         var box=arr.find(b=>b.box===p.box);
         if(!box||box.ghost)return;
         if(box.judge==='MISMATCH')return; // 부적합 그대로
-        if(p.current.length>0 && p.result.length===0){
-          box.judge='DROP';p.judge='DROP'; // 빈 박스 = 박스 자체 부적합
-        } else if(p.result.length>=1){
+        if(p.result.length===0){
+          box.judge='DROP';p.judge='DROP'; // LLM 빈 응답 = 박스 부적합 (current 0이어도)
+        } else {
           box.judge='OK';p.judge='OK'; // LLM 결과 1개라도 있으면 OK
         }
       });
@@ -529,7 +529,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.28</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.29</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
