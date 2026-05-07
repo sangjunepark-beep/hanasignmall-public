@@ -1,10 +1,12 @@
-/* 박스별 검수 v11.0.25 (이중 LLM 강화 프롬프트, 룰 제거) */
+/* 박스별 검수 v11.0.26 (디버그 강화 + 빈응답 명시 + 실패 배지) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
 var KEY=localStorage.getItem('__ANTHROPIC_KEY');
 if(!KEY){KEY=prompt('Claude API Key:');if(KEY)localStorage.setItem('__ANTHROPIC_KEY',KEY);}
 var LLM_ENABLED=!!KEY;
+window.__bapDebug={llmCalls:[],errors:[]};
+console.log('[bap] v11.0.26 시작 LLM_ENABLED=',LLM_ENABLED);
 var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',MISMATCH:'#ffd6d6',ERR:'#fadbd8'};
 var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MISMATCH:'부적합포함',ERR:'에러'};
 var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠'};
@@ -56,23 +58,31 @@ function rowJ(s1,s2){
 }
 
 async function llmCall(model,prompt){
+  var dbg={model:model,promptLen:prompt.length,t:Date.now()};
   try{
     var r=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
       headers:{'x-api-key':KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','content-type':'application/json'},
-      body:JSON.stringify({model:model,max_tokens:3000,messages:[{role:'user',content:prompt}]})
+      body:JSON.stringify({model:model,max_tokens:4000,messages:[{role:'user',content:prompt}]})
     });
+    dbg.status=r.status;
+    if(r.status===401){dbg.err='401_KEY_INVALID';window.__bapDebug.errors.push(dbg);console.error('[bap] 401 키 인증 실패!',dbg);return null;}
+    if(r.status===429){dbg.err='429_RATE_LIMIT';window.__bapDebug.errors.push(dbg);console.error('[bap] 429 rate limit',dbg);return null;}
     var j=await r.json();
-    if(!j.content||!j.content[0])return null;
+    if(!j.content||!j.content[0]){dbg.err='NO_CONTENT';dbg.body=JSON.stringify(j).slice(0,300);window.__bapDebug.errors.push(dbg);console.error('[bap] no content',dbg);return null;}
     var txt=j.content[0].text;
+    dbg.txtLen=txt.length;
+    dbg.txtTail=txt.slice(-100);
     var m=txt.match(/```json\s*([\s\S]+?)\s*```/);
     var jsonStr=m?m[1]:txt;
-    try{return JSON.parse(jsonStr);}catch(e){
+    try{var parsed=JSON.parse(jsonStr);dbg.ok=1;dbg.keys=Object.keys(parsed);window.__bapDebug.llmCalls.push(dbg);return parsed;}catch(e){
+      dbg.parse1Err=String(e).slice(0,80);
       var m2=jsonStr.match(/\{[\s\S]+\}/);
-      if(m2){try{return JSON.parse(m2[0]);}catch(e2){return null;}}
+      if(m2){try{var p2=JSON.parse(m2[0]);dbg.ok=2;dbg.keys=Object.keys(p2);window.__bapDebug.llmCalls.push(dbg);return p2;}catch(e2){dbg.parse2Err=String(e2).slice(0,80);}}
+      dbg.err='PARSE_FAIL';dbg.txt=txt.slice(0,400);window.__bapDebug.errors.push(dbg);console.error('[bap] JSON 파싱 실패',dbg);
       return null;
     }
-  }catch(e){return null;}
+  }catch(e){dbg.err='FETCH_'+String(e).slice(0,60);window.__bapDebug.errors.push(dbg);console.error('[bap] fetch err',dbg);return null;}
 }
 
 function buildBasePrompt(name,reqs){
@@ -183,6 +193,7 @@ async function llmJudge(name,reqs){
 }
 
 async function buildPlan(s1,s2,name){
+  var rowDbg={name:name,t:Date.now(),boxes:[]};
   var plans=[];
   var allBoxes=s1.concat(s2);
   
@@ -252,6 +263,9 @@ async function buildPlan(s1,s2,name){
     });
   });
   
+  rowDbg.llmResult=llmResult;
+  rowDbg.plans=plans.map(p=>({k:p.kind+'|'+p.box,cur:p.current.length,rm:p.remove.length,ad:p.add.length}));
+  window.__bapDebug.llmCalls.push({type:'buildPlan',row:rowDbg});
   return {plans:plans,llmUsed:!!llmResult,indActions:indActions};
 }
 
@@ -474,7 +488,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.25</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.26</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
