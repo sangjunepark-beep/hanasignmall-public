@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.20 (UI 재설계 - 박스 카드 4단) */
+/* 박스별 검수 v11.0.20.1 (UI 재설계 - 박스 카드 4단) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -219,6 +219,30 @@ async function fetchAndAnalyze(rgr,name){
   }catch(e){return {rgr:rgr,name:name,err:String(e).slice(0,40)};}
 }
 
+async function fetchAllPagesRgrs(catCode){
+  var all={},out=[];
+  for(var pp=1;pp<=30;pp++){
+    try{
+      var u='/AdminManager/GoodsList.php?CodeT1_1='+catCode+'&page='+pp+'&startpage='+pp+'&viewCnt=30';
+      var r=await fetch(u,{credentials:'include',cache:'no-store'});
+      var t=await r.text();
+      var d=new DOMParser().parseFromString(t,'text/html');
+      var rows=Array.from(d.querySelectorAll('tr')).map(tr=>{
+        var m=tr.innerText.match(/(\d{12}_\d{4})/);
+        if(!m)return null;
+        var rgr=m[1],cells=Array.from(tr.querySelectorAll('td')),nm='';
+        cells.forEach(c=>{var t=c.innerText.trim();if(t.length>nm.length&&!/^\d+$/.test(t)&&!/^[A-Z0-9_]+$/.test(t)&&t!==rgr&&t.length<80)nm=t;});
+        return {rgr:rgr,name:nm};
+      }).filter(x=>x);
+      var added=0;
+      rows.forEach(r=>{if(!all[r.rgr]){all[r.rgr]=1;out.push(r);added++;}});
+      if(added===0)break;
+      var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent='페이지 '+pp+' 수집 중... 누적 '+out.length+'건';
+    }catch(e){break;}
+  }
+  return out;
+}
+
 function downloadCSV(rows,fname){
   var BOM='﻿';
   var csv=BOM+rows.map(r=>r.map(c=>{var s=String(c==null?'':c);if(/[,"\n]/.test(s))s='"'+s.replace(/"/g,'""')+'"';return s;}).join(',')).join('\r\n');
@@ -345,6 +369,7 @@ function render(){
   H+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
   H+='<button data-f="all" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#fff;color:#305496;font-size:13px">전체</button>';
   H+='<button data-f="fix" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:13px">수정필요</button>';
+  H+='<button id="__ball" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#17a2b8;color:#fff;font-size:13px">📂 전체 페이지</button>';
   if(totDel+totAdd>0)H+='<button id="__bfa" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:13px">전체 자동수정 '+(totDel+totAdd)+'</button>';
   H+='<button id="__bxl" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#28a745;color:#fff;font-size:13px">엑셀</button>';
   H+=hdrCtrls+'</div></div>';
@@ -375,7 +400,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] 4단 / 부적합(옥상 등) 자동 제거<span style="float:right">v11.0.20</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] 4단 / 부적합(옥상 등) 자동 제거<span style="float:right">v11.0.20.1</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
@@ -401,7 +426,21 @@ function render(){
       else{b.style.background='transparent';b.style.color='#fff';}
     });
   }
-  Array.from(p.querySelectorAll('.__bf')).forEach(b=>{b.onclick=function(){flt(b.getAttribute('data-f'));};});
+  var ball=document.getElementById('__ball');
+  if(ball)ball.onclick=async function(){
+    if(!confirm('현재 카테고리의 전체 페이지를 일괄 검수할까요?\n(LLM 호출 = 페이지 X 30건)'))return;
+    p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">📂 전체 페이지 수집 중...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
+    attachCtrls();
+    var allRgrs=await fetchAllPagesRgrs(cat);
+    var newRes=[];
+    for(var i=0;i<allRgrs.length;i++){
+      var o=allRgrs[i];
+      newRes.push(await fetchAndAnalyze(o.rgr,o.name));
+      var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent='검수 '+newRes.length+' / '+allRgrs.length+' (Haiku→Sonnet)';
+    }
+    res=newRes;window.__bapResults=res;render();
+  };
+    Array.from(p.querySelectorAll('.__bf')).forEach(b=>{b.onclick=function(){flt(b.getAttribute('data-f'));};});
   Array.from(p.querySelectorAll('.__brfx')).forEach(b=>{
     b.onclick=async function(){
       var idx=parseInt(b.getAttribute('data-fix'),10),r=res[idx];
