@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.22 (LLM이 현재+가용 보고 최종 결과 결정) */
+/* 박스별 검수 v11.0.23 (LLM이 현재+가용 보고 최종 결과 결정) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -94,9 +94,21 @@ function buildBasePrompt(name,reqs){
   pt+=' - 1~3개여도 OK. 5개 채우려고 무관한 공간 추가 X\n';
   pt+=' - 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장\n';
   pt+=' - 일반 안내/금지/주의 사인물도 상품명의 주제에 따름 (예: "미끄럼틀 화상주의" → 놀이터만, 주차장 X)\n';
-  pt+='\n[3단계] 박스별 응답 — 각 박스의 "최종 적합 공간 list"\n';
-  pt+=' - 현재 체크된 공간이라도 부적합하면 응답에서 빼기 (제거됨)\n';
-  pt+=' - 가용 공간 중에 적합하면 응답에 포함 (추가됨)\n\n';
+  pt+='\n[3단계] 구체 예시 (이대로 따라할 것)\n';
+  pt+='예시 1: 상품 "미끄럼틀 화상주의 안내판"\n';
+  pt+='  박스 [카테고리 02 안내판] 가용 [주차장, 계단, 관리사무소, 조경시설, 놀이터/공원, 카운터]\n';
+  pt+='  → 적합 응답: ["놀이터/공원", "조경시설"]\n';
+  pt+='  → 절대 X: 주차장, 계단, 관리사무소, 카운터 (미끄럼틀 안내판은 놀이터에만 노출)\n';
+  pt+='예시 2: 상품 "2부제 차량 요일제 입간판"\n';
+  pt+='  박스 [카테고리 04 입간판] 가용 [주차장, 카운터, 도로/인도, 놀이터/공원, 공용통로]\n';
+  pt+='  → 적합 응답: ["주차장", "도로/인도", "공영주차장"]\n';
+  pt+='  → 절대 X: 카운터, 놀이터/공원\n';
+  pt+='예시 3: 상품 "소방시설 안내판"\n';
+  pt+='  → 적합: ["공용통로", "비상구", "건물외부"]\n';
+  pt+='  → X: 놀이터/공원, 운동장\n\n';
+  pt+='[4단계] 박스별 응답 작성\n';
+  pt+=' - 각 박스의 "최종 적합 공간 list" (라벨 그대로)\n';
+  pt+=' - 현재 체크된 공간이라도 위 원칙대로 부적합하면 빼기\n\n';
   pt+='박스 정보 (현재 체크 + 가용):\n';
   reqs.forEach(r=>{
     pt+='- ['+r.label+']\n';
@@ -426,7 +438,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · LLM이 상품명+현재+가용 보고 부적합 자동 제거<span style="float:right">v11.0.22</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · LLM이 상품명+현재+가용 보고 부적합 자동 제거<span style="float:right">v11.0.23</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
