@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.20.2 (UI 재설계 - 박스 카드 4단) */
+/* 박스별 검수 v11.0.20.3 (UI 재설계 - 박스 카드 4단) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -77,14 +77,28 @@ async function llmCall(model,prompt){
 
 function buildBasePrompt(name,reqs){
   var pt='하나사인몰 사인물 상품에 적합한 노출 공간을 박스별로 추천.\n상품명: "'+name+'"\n\n';
-  pt+='원칙:\n1. 진짜 적합한 공간만. 5개 미만 OK.\n';
-  pt+='2. 사인물(입간판/안내판/표지판/스티커)은 사람 통행 위치: 입구, 주차장, 공용통로, 카운터, 도로/인도\n';
-  pt+='3. 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장 → 추천 X\n';
-  pt+='4. 업종별: 학교(입구/주차장/운동장/공용통로) / 아파트(입구/주차장/커뮤니티/관리/엘리베이터) / 회사(정문/주차장/외부)\n\n';
+  pt+='1단계: 상품명 의미 분석 (가장 중요)\n';
+  pt+='상품명에 있는 키워드로 이 사인물이 "어디에 / 어떤 상황에" 쓰이는지 먼저 판단:\n';
+  pt+=' - 미끄럼틀/시소/그네/놀이터/어린이놀이 → 놀이터/공원, 어린이 시설\n';
+  pt+=' - 주차/차량/요일제/2부제 → 주차장, 공영주차장, 도로/인도, 건물외부\n';
+  pt+=' - 소방/화재/방화/소화기 → 통로, 비상구, 건물외부, 주차장\n';
+  pt+=' - 산사태/산불/위험지역/위험경고 → 조경시설, 건물외부, 도로/인도\n';
+  pt+=' - 단지/관리/거주자/입주민 → 아파트 공용통로, 관리사무소, 커뮤니티시설\n';
+  pt+=' - 어린이/노인/임산부/약자 → 학교, 유치원, 공용통로, 입구\n';
+  pt+=' - 캠핑/야외/공원이용 → 놀이터/공원, 조경시설, 건물외부\n';
+  pt+=' - 안내/위치/방향 → 카운터/인포메이션, 공용통로, 입구\n';
+  pt+=' - 금지/주의/경고 → 상품명의 주제에 맞는 공간 (주차금지면 주차장)\n';
+  pt+='\n2단계: 추천 원칙\n';
+  pt+=' - 상품명 키워드와 무관한 공간은 추천 X (예: "미끄럼틀 안내판"에 주차장 X)\n';
+  pt+=' - 5개 미만 OK. 억지로 5개 채우지 말 것.\n';
+  pt+=' - 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장\n';
+  pt+='\n3단계: 업종별 박스 (catT)\n';
+  pt+=' - 그 업종 시설에서 이 사인물이 실제 노출될 위치만\n';
+  pt+=' - 미끄럼틀 안내판이 회사 박스에 들어간다면 → 회사 안의 야외 시설(있는 경우만), 보통 회사는 부적합\n\n';
   pt+='박스별 가용 공간:\n';
   reqs.forEach(r=>{pt+='- ['+r.label+'] 가용: ['+r.options.join(', ')+']\n';});
-  pt+='\n응답: JSON만\n{\n';
-  reqs.forEach((r,i)=>{pt+='  "'+r.key+'": [...적합 라벨]'+(i<reqs.length-1?',':'')+'\n';});
+  pt+='\n응답: JSON만 (적합 라벨만, 5개 미만 OK)\n{\n';
+  reqs.forEach((r,i)=>{pt+='  "'+r.key+'": [...]'+(i<reqs.length-1?',':'')+'\n';});
   pt+='}';
   return pt;
 }
@@ -98,7 +112,12 @@ async function llmJudge(name,reqs){
   // 2차: Sonnet 검증 (Haiku 결과 + 부적합 거름 + 최종 결정)
   var verifyPt='하나사인몰 사인물 상품의 박스별 공간 추천 검증.\n상품명: "'+name+'"\n\n';
   verifyPt+='1차(Haiku) 추천 결과:\n'+JSON.stringify(haikuResult||{},null,2)+'\n\n';
-  verifyPt+='검증 원칙:\n1. 사인물 성격에 진짜 적합한지 재확인\n2. 옥상/수영장/화장실/키즈룸/독서실/헬스장/골프연습장은 절대 X (있으면 제거)\n3. 더 좋은 대안 있으면 교체\n4. 5개 미만 OK\n\n';
+  verifyPt+='검증 원칙 (엄격):\n';
+  verifyPt+='1. 상품명 핵심 키워드와 매칭되는 공간만 OK (예: "미끄럼틀"에 주차장 X)\n';
+  verifyPt+='2. 1차에서 추천한 공간이 상품 주제와 무관하면 제거\n';
+  verifyPt+='3. 옥상/수영장/화장실/키즈룸/독서실/헬스장/골프연습장 절대 X\n';
+  verifyPt+='4. 5개 미만 OK. 억지로 채우지 말 것.\n';
+  verifyPt+='5. 누락된 더 적합한 공간이 있으면 추가\n\n';
   verifyPt+='박스별 가용 공간 (1차에서 누락된 좋은 항목 다시 검토):\n';
   reqs.forEach(r=>{verifyPt+='- ['+r.label+'] 가용: ['+r.options.join(', ')+']\n';});
   verifyPt+='\n최종 응답: JSON만\n{\n';
@@ -400,7 +419,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] 4단 / 부적합(옥상 등) 자동 제거<span style="float:right">v11.0.20.2</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] 4단 / 부적합(옥상 등) 자동 제거<span style="float:right">v11.0.20.3</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
