@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.21 (LLM이 현재+가용 보고 최종 결과 결정) */
+/* 박스별 검수 v11.0.22 (LLM이 현재+가용 보고 최종 결과 결정) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -86,10 +86,14 @@ function buildBasePrompt(name,reqs){
   pt+=' - 단지/관리/거주자/입주민 → 아파트 공용통로, 관리사무소, 커뮤니티시설\n';
   pt+=' - 어린이/노인/임산부/약자 → 학교, 유치원, 공용통로, 입구\n';
   pt+=' - 캠핑/공원이용 → 놀이터/공원, 조경시설\n';
-  pt+='\n[2단계] 핵심 룰\n';
-  pt+=' - 상품명 키워드와 무관한 공간은 절대 X (예: "미끄럼틀"에 주차장 X)\n';
-  pt+=' - 5개 미만 OK. 억지로 채우지 말 것.\n';
+  pt+='\n[2단계] 핵심 룰 (사용자 검색 관점)\n';
+  pt+=' - 자사몰 검색 사용자가 그 공간 필터를 선택했을 때, 이 상품이 결과로 나오면 합리적인가?\n';
+  pt+='   예: "주차장 필터" 선택한 사람에게 "미끄럼틀 안내판"이 나오면 무관한 결과 → 주차장 빼야 함\n';
+  pt+='   예: "놀이터/공원 필터" 선택한 사람에게 "미끄럼틀 안내판" 나오면 적합 → 유지\n';
+  pt+=' - 상품명 핵심 키워드와 직접 연관 있는 공간만 응답\n';
+  pt+=' - 1~3개여도 OK. 5개 채우려고 무관한 공간 추가 X\n';
   pt+=' - 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장\n';
+  pt+=' - 일반 안내/금지/주의 사인물도 상품명의 주제에 따름 (예: "미끄럼틀 화상주의" → 놀이터만, 주차장 X)\n';
   pt+='\n[3단계] 박스별 응답 — 각 박스의 "최종 적합 공간 list"\n';
   pt+=' - 현재 체크된 공간이라도 부적합하면 응답에서 빼기 (제거됨)\n';
   pt+=' - 가용 공간 중에 적합하면 응답에 포함 (추가됨)\n\n';
@@ -111,12 +115,13 @@ async function llmJudge(name,reqs){
   var haikuResult=await llmCall('claude-haiku-4-5-20251001',basePt);
   
   var verifyPt='상품명: "'+name+'"\n\n1차(Haiku) 결과:\n'+JSON.stringify(haikuResult||{},null,2)+'\n\n';
-  verifyPt+='검증 (Sonnet, 엄격):\n';
-  verifyPt+='1. 상품명 핵심 키워드와 매칭되는 공간만 응답\n';
-  verifyPt+='2. 1차에서 부적절한 공간 추천했으면 빼기 (예: "미끄럼틀"에 주차장 → 빼기)\n';
-  verifyPt+='3. 1차에서 누락된 더 적합한 공간 있으면 추가\n';
+  verifyPt+='검증 원칙 (사용자 검색 관점, 엄격):\n';
+  verifyPt+='1. 자사몰 사용자가 그 공간 필터로 검색했을 때 이 상품이 나오는 게 합리적인가?\n';
+  verifyPt+='   - "미끄럼틀 안내판"을 "주차장" 필터로 찾는 사람이 있을까? 없으면 빼기\n';
+  verifyPt+='2. 1차에서 추천한 공간 중 상품 주제와 무관한 것 모두 빼기\n';
+  verifyPt+='3. 1~3개로 정확히 좁혀도 OK. 5개 강박 X\n';
   verifyPt+='4. 옥상/수영장/화장실 등 절대 X\n';
-  verifyPt+='5. 5개 미만 OK\n\n';
+  verifyPt+='5. 일반 사인물(안내판/표지판/스티커)도 상품명 주제 따라 좁게 판단\n\n';
   verifyPt+='박스 정보:\n';
   reqs.forEach(r=>{
     verifyPt+='- ['+r.label+'] 현재:['+(r.current.join(', ')||'없음')+'] / 가용:['+r.options.join(', ')+']\n';
@@ -421,7 +426,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · LLM이 상품명+현재+가용 보고 부적합 자동 제거<span style="float:right">v11.0.21</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · LLM이 상품명+현재+가용 보고 부적합 자동 제거<span style="float:right">v11.0.22</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
