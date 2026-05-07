@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.18.5 (Sonnet + 부적합 자동 제거) */
+/* 박스별 검수 v11.0.18.6 (Sonnet + 부적합 자동 제거) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -328,6 +328,7 @@ function render(){
   H+='<button data-f="all" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#fff;color:#305496;font-size:13px">전체</button>';
   H+='<button data-f="fix" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:13px">수정필요</button>';
   H+='<button data-f="bad" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:13px">🚫부적합</button>';
+  H+='<button id="__ball" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#17a2b8;color:#fff;font-size:13px">📂 전체 페이지</button>';
   if(totalAct>0)H+='<button id="__bfa" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:13px">전체 자동수정 '+totalAct+'</button>';
   H+='<button id="__bxl" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#28a745;color:#fff;font-size:13px">엑셀</button>';
   H+=hdrCtrls+'</div></div>';
@@ -369,7 +370,7 @@ function render(){
     H+='</tr>';
   });
   H+='</tbody></table></div>';
-  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO + 🏢 catT 둘 다 3개+ OK / 🚫 부적합(옥상 등) 자동 제거 / '+(LLM_ENABLED?'🤖 Sonnet 4.6':'룰')+'<span style="float:right">v11.0.18.5</span></div></div>';
+  H+='<div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">📦 catO + 🏢 catT 둘 다 3개+ OK / 🚫 부적합(옥상 등) 자동 제거 / '+(LLM_ENABLED?'🤖 Sonnet 4.6':'룰')+'<span style="float:right">v11.0.18.6</span></div></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스타입','catX','이름','업종','공간','부적합','판정','제거','추가','LLM','URL'];
@@ -407,6 +408,21 @@ function render(){
     });
   }
   Array.from(p.querySelectorAll('.__bf')).forEach(b=>{b.onclick=function(){flt(b.getAttribute('data-f'));};});
+  var ball=document.getElementById('__ball');
+  if(ball)ball.onclick=async function(){
+    if(!confirm('현재 카테고리의 전체 페이지를 수집해서 일괄 검수할까요? (LLM 호출 ~150회 = $1)'))return;
+    ball.textContent='수집중...';ball.disabled=true;
+    p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">📂 전체 페이지 수집 + Sonnet 검수 중...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
+    attachCtrls();
+    var allRgrs=await fetchAllPagesRgrs(cat);
+    var newRes=[];
+    for(var i=0;i<allRgrs.length;i++){
+      var o=allRgrs[i];
+      newRes.push(await fetchAndAnalyze(o.rgr,o.name));
+      var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent='검수 중... '+newRes.length+' / '+allRgrs.length+(LLM_ENABLED?' (Sonnet)':'');
+    }
+    res=newRes;window.__bapResults=res;render();
+  };
   Array.from(p.querySelectorAll('.__brfx')).forEach(b=>{
     b.onclick=async function(){
       var idx=parseInt(b.getAttribute('data-fix'),10),r=res[idx];
