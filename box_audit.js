@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.26 (디버그 강화 + 빈응답 명시 + 실패 배지) */
+/* 박스별 검수 v11.0.27 (키 매핑 fallback (label 매칭) + key 강제 프롬프트) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -6,7 +6,7 @@ var KEY=localStorage.getItem('__ANTHROPIC_KEY');
 if(!KEY){KEY=prompt('Claude API Key:');if(KEY)localStorage.setItem('__ANTHROPIC_KEY',KEY);}
 var LLM_ENABLED=!!KEY;
 window.__bapDebug={llmCalls:[],errors:[]};
-console.log('[bap] v11.0.26 시작 LLM_ENABLED=',LLM_ENABLED);
+console.log('[bap] v11.0.27 시작 LLM_ENABLED=',LLM_ENABLED);
 var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',MISMATCH:'#ffd6d6',ERR:'#fadbd8'};
 var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MISMATCH:'부적합포함',ERR:'에러'};
 var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠'};
@@ -139,10 +139,11 @@ function buildBasePrompt(name,reqs){
     pt+='현재 체크: ['+(r.current.length?r.current.join(', '):'없음')+']\n';
     pt+='가용 공간: ['+r.options.join(', ')+']\n';
   });
-  pt+='\n# 응답 형식\n';
-  pt+='박스별로 STEP 1~3을 거친 최종 적합 공간 라벨 list. JSON만 응답.\n{\n';
+  pt+='\n# 응답 형식 (절대 준수)\n';
+  pt+='**중요: JSON 키는 아래 그대로 사용. 절대 한국어 라벨이나 다른 형식으로 변환 금지.**\n';
+  pt+='JSON만 응답:\n```json\n{\n';
   reqs.forEach((r,i)=>{pt+='  "'+r.key+'": [...최종 적합 라벨, 가용 공간 list 중에서만]'+(i<reqs.length-1?',':'')+'\n';});
-  pt+='}';
+  pt+='}\n```\n각 키는 정확히 위 표기(cat1|1_1, cat1|1_2 등)로. 박스 이름이나 카테고리명으로 키 만들지 말 것.';
   return pt;
 }
 
@@ -184,10 +185,11 @@ async function llmJudge(name,reqs){
     verifyPt+='가용 공간: ['+r.options.join(', ')+']\n';
     verifyPt+='Haiku 추천: '+JSON.stringify((haikuResult&&haikuResult[r.key])||[])+'\n';
   });
-  verifyPt+='\n# 응답 형식\n';
-  verifyPt+='재검증 후 최종 적합 공간 list. JSON만.\n{\n';
+  verifyPt+='\n# 응답 형식 (절대 준수)\n';
+  verifyPt+='**중요: JSON 키는 아래 그대로 사용. 절대 변환 금지.**\n';
+  verifyPt+='JSON만:\n```json\n{\n';
   reqs.forEach((r,i)=>{verifyPt+='  "'+r.key+'": [...최종]'+(i<reqs.length-1?',':'')+'\n';});
-  verifyPt+='}';
+  verifyPt+='}\n```\n각 키는 정확히 위 표기로 (cat1|1_1, cat2|2_1 등). 라벨로 바꾸지 말 것.';
   var sonnetResult=await llmCall('claude-sonnet-4-6',verifyPt);
   return sonnetResult||haikuResult;
 }
@@ -220,6 +222,28 @@ async function buildPlan(s1,s2,name){
   
   var llmResult=null;
   if(LLM_ENABLED&&reqs.length>0){llmResult=await llmJudge(name||'',reqs);}
+  
+  // 키 매핑 fallback: LLM이 키를 라벨로 바꿔 반환한 경우 보정
+  if(llmResult){
+    reqs.forEach(req=>{
+      if(llmResult[req.key])return; // 정상 키 있으면 OK
+      // label 또는 변형 매칭 시도
+      var candidates=[req.label,req.label.replace(/\s/g,'_').replace(/\//g,''),req.label.replace(/\s/g,'').replace(/\//g,'')];
+      for(var i=0;i<candidates.length;i++){
+        if(llmResult[candidates[i]]){llmResult[req.key]=llmResult[candidates[i]];break;}
+      }
+      // 그래도 없으면 모든 키 부분 매칭 (예: "카테고리02_안내판" → catX="02"+name="안내판" 매칭)
+      if(!llmResult[req.key]){
+        var lkeys=Object.keys(llmResult);
+        var catX=req.label.match(/\d{2}/);
+        if(catX){
+          var matched=lkeys.find(k=>k.indexOf(catX[0])>=0&&Array.isArray(llmResult[k]));
+          if(matched){llmResult[req.key]=llmResult[matched];}
+        }
+      }
+    });
+    if(window.__bapDebug)window.__bapDebug.llmCalls.push({type:'keyMapping',mapped:reqs.map(r=>({k:r.key,found:!!llmResult[r.key],val:llmResult[r.key]}))});
+  }
   
   reqs.forEach(req=>{
     var p=req.plan;
@@ -488,7 +512,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.26</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.27</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
