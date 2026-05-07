@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.23 (LLM이 현재+가용 보고 최종 결과 결정) */
+/* 박스별 검수 v11.0.24 (LLM이 현재+가용 보고 최종 결과 결정) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -12,6 +12,29 @@ var CAT_NAMES={'01':'게시판','02':'안내판','04':'입간판','05':'현수�
 var T_NAMES={'01':'학교/학원','02':'식당/카페','03':'아파트','04':'호텔/펜션','05':'병원/요양시설','06':'회사/공장','07':'공공기관','08':'헬스/레저','09':'기타업종'};
 var BAD_SPACES=['옥상','수영장/사우나','수영장','사우나','키즈룸','화장실','독서실','골프연습장','헬스장'];
 function isBad(l){return BAD_SPACES.indexOf(l)>=0;}
+var STRICT_RULES=[
+  {kw:['미끄럼틀','시소','그네','놀이기구','놀이시설','놀이터'],allow:['놀이터/공원','조경시설','운동장','놀이이시설','커뮤니티시설']},
+  {kw:['주차','차량','요일제','2부제','과속','속도'],allow:['주차장','공영주차장','도로/인도','건물외부']},
+  {kw:['소방','화재','방화','소화기','소방차'],allow:['주차장','공용통로','비상구','건물외부','공용통로,로비','로비']},
+  {kw:['단지','거주자','입주민'],allow:['공용통로','관리사무소/사무실','관리사무소','커뮤니티시설','입구','로비','공용통로,로비','주차장']},
+  {kw:['어린이보호','어린이안전','어린이승강','노인보호','임산부','승강장','어린이'],allow:['학교(초/중/고)','유치원/학원','공용통로','입구','놀이터/공원','커뮤니티시설','교문','교실/실습실']},
+  {kw:['산사태','산불','위험지역','침수'],allow:['조경시설','건물외부','도로/인도','놀이터/공원']},
+  {kw:['양봉','산림'],allow:['조경시설','건물외부','놀이터/공원']},
+  {kw:['캠핑','야영'],allow:['놀이터/공원','조경시설','건물외부']},
+  {kw:['전기차','충전소'],allow:['주차장','공영주차장','건물외부']},
+  {kw:['반려동물','애견','펫'],allow:['놀이터/공원','조경시설','건물외부','공용통로']}
+];
+function applyStrictRule(name,finalLabels,allOptions){
+  if(!name)return finalLabels;
+  for(var i=0;i<STRICT_RULES.length;i++){
+    var r=STRICT_RULES[i];
+    if(r.kw.some(k=>name.indexOf(k)>=0)){
+      var allowed=r.allow.filter(s=>allOptions.indexOf(s)>=0);
+      return allowed.length>0?allowed:finalLabels;
+    }
+  }
+  return finalLabels;
+}
 
 function analyzeFull(d){
   var cb=Array.from(d.querySelectorAll('input[type=checkbox]'));
@@ -181,11 +204,29 @@ async function buildPlan(s1,s2,name){
     var finalLabels=(llmResult&&llmResult[req.key]&&Array.isArray(llmResult[req.key]))?llmResult[req.key]:null;
     
     if(finalLabels===null){
-      // LLM 실패 → 부적합만 제거 (안전 fallback)
-      p.currentItems.filter(i=>isBad(i.label)).forEach(it=>{p.remove.push(it.label);p.removeItems.push(it);});
+      // LLM 실패 → STRICT_RULES 룰만 적용
+      var allOpts2=p.allItems.map(i=>i.label);
+      var ruled=applyStrictRule(name,null,allOpts2);
+      if(ruled){
+        // 룰 매칭됨: ruled에 없는 현재 항목 제거
+        p.currentItems.forEach(it=>{
+          if(ruled.indexOf(it.label)<0){p.remove.push(it.label);p.removeItems.push(it);}
+        });
+        ruled.forEach(lbl=>{
+          if(p.current.indexOf(lbl)>=0)return;
+          var it=p.allItems.find(i=>i.label===lbl&&!i.checked);
+          if(it){p.add.push(lbl);p.addItems.push(it);}
+        });
+      } else {
+        // 룰도 없음 → 부적합만 제거
+        p.currentItems.filter(i=>isBad(i.label)).forEach(it=>{p.remove.push(it.label);p.removeItems.push(it);});
+      }
     } else {
       // BAD_SPACES는 LLM 응답에 있어도 제외
       finalLabels=finalLabels.filter(l=>!isBad(l));
+      // STRICT_RULES 강제 적용 (상품명 키워드 매칭 시 LLM 무시)
+      var allOpts=p.allItems.map(i=>i.label);
+      finalLabels=applyStrictRule(name,finalLabels,allOpts);
       
       // 제거: 현재 중 최종에 없는 것 (BAD_SPACES 자동 포함)
       p.currentItems.forEach(it=>{
@@ -438,7 +479,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · LLM이 상품명+현재+가용 보고 부적합 자동 제거<span style="float:right">v11.0.23</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · LLM이 상품명+현재+가용 보고 부적합 자동 제거<span style="float:right">v11.0.24</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
