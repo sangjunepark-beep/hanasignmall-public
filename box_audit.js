@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.19 (UI 재설계 - 박스 카드 4단) */
+/* 박스별 검수 v11.0.20 (UI 재설계 - 박스 카드 4단) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -55,23 +55,12 @@ function rowJ(s1,s2){
   return 'PARTIAL';
 }
 
-async function llmJudge(name,reqs){
-  if(!KEY||reqs.length===0)return null;
-  var pt='하나사인몰 사인물 상품에 적합한 노출 공간을 박스별로 추천.\n상품명: "'+name+'"\n\n';
-  pt+='원칙:\n1. 진짜 적합한 공간만. 5개 미만 OK.\n';
-  pt+='2. 사인물(입간판/안내판/표지판/스티커)은 사람 통행 위치: 입구, 주차장, 공용통로, 카운터, 도로/인도\n';
-  pt+='3. 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장 → 절대 추천 X\n';
-  pt+='4. 업종별: 학교(입구/주차장/운동장/공용통로) / 아파트(입구/주차장/커뮤니티/관리/엘리베이터) / 회사(정문/주차장/외부) / 병원(입구/주차장/외부)\n\n';
-  pt+='박스별 가용 공간:\n';
-  reqs.forEach(r=>{pt+='- ['+r.label+'] 가용: ['+r.options.join(', ')+']\n';});
-  pt+='\n응답: JSON만\n{\n';
-  reqs.forEach((r,i)=>{pt+='  "'+r.key+'": [...적합 라벨]'+(i<reqs.length-1?',':'')+'\n';});
-  pt+='}';
+async function llmCall(model,prompt){
   try{
     var r=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
       headers:{'x-api-key':KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','content-type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2000,messages:[{role:'user',content:pt}]})
+      body:JSON.stringify({model:model,max_tokens:2000,messages:[{role:'user',content:prompt}]})
     });
     var j=await r.json();
     if(!j.content||!j.content[0])return null;
@@ -84,6 +73,40 @@ async function llmJudge(name,reqs){
       return null;
     }
   }catch(e){return null;}
+}
+
+function buildBasePrompt(name,reqs){
+  var pt='하나사인몰 사인물 상품에 적합한 노출 공간을 박스별로 추천.\n상품명: "'+name+'"\n\n';
+  pt+='원칙:\n1. 진짜 적합한 공간만. 5개 미만 OK.\n';
+  pt+='2. 사인물(입간판/안내판/표지판/스티커)은 사람 통행 위치: 입구, 주차장, 공용통로, 카운터, 도로/인도\n';
+  pt+='3. 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장 → 추천 X\n';
+  pt+='4. 업종별: 학교(입구/주차장/운동장/공용통로) / 아파트(입구/주차장/커뮤니티/관리/엘리베이터) / 회사(정문/주차장/외부)\n\n';
+  pt+='박스별 가용 공간:\n';
+  reqs.forEach(r=>{pt+='- ['+r.label+'] 가용: ['+r.options.join(', ')+']\n';});
+  pt+='\n응답: JSON만\n{\n';
+  reqs.forEach((r,i)=>{pt+='  "'+r.key+'": [...적합 라벨]'+(i<reqs.length-1?',':'')+'\n';});
+  pt+='}';
+  return pt;
+}
+
+async function llmJudge(name,reqs){
+  if(!KEY||reqs.length===0)return null;
+  // 1차: Haiku 빠른 후보
+  var basePt=buildBasePrompt(name,reqs);
+  var haikuResult=await llmCall('claude-haiku-4-5-20251001',basePt);
+  
+  // 2차: Sonnet 검증 (Haiku 결과 + 부적합 거름 + 최종 결정)
+  var verifyPt='하나사인몰 사인물 상품의 박스별 공간 추천 검증.\n상품명: "'+name+'"\n\n';
+  verifyPt+='1차(Haiku) 추천 결과:\n'+JSON.stringify(haikuResult||{},null,2)+'\n\n';
+  verifyPt+='검증 원칙:\n1. 사인물 성격에 진짜 적합한지 재확인\n2. 옥상/수영장/화장실/키즈룸/독서실/헬스장/골프연습장은 절대 X (있으면 제거)\n3. 더 좋은 대안 있으면 교체\n4. 5개 미만 OK\n\n';
+  verifyPt+='박스별 가용 공간 (1차에서 누락된 좋은 항목 다시 검토):\n';
+  reqs.forEach(r=>{verifyPt+='- ['+r.label+'] 가용: ['+r.options.join(', ')+']\n';});
+  verifyPt+='\n최종 응답: JSON만\n{\n';
+  reqs.forEach((r,i)=>{verifyPt+='  "'+r.key+'": [...최종 적합 라벨]'+(i<reqs.length-1?',':'')+'\n';});
+  verifyPt+='}';
+  
+  var sonnetResult=await llmCall('claude-sonnet-4-6',verifyPt);
+  return sonnetResult||haikuResult;
 }
 
 async function buildPlan(s1,s2,name){
@@ -250,7 +273,7 @@ function renderBoxCard(plan){
   return H;
 }
 
-p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'Sonnet 검수 중':'룰 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
+p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'Haiku→Sonnet 이중검증 중':'룰 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
 attachCtrls();
 
 // === 단건 (편집 페이지) ===
@@ -304,7 +327,7 @@ var res=[];
 for(var i=0;i<rgrs.length;i++){
   var o=rgrs[i];
   res.push(await fetchAndAnalyze(o.rgr,o.name));
-  var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent=res.length+' / '+rgrs.length+(LLM_ENABLED?' (Sonnet)':'');
+  var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent=res.length+' / '+rgrs.length+(LLM_ENABLED?' (Haiku→Sonnet)':'');
 }
 window.__bapResults=res;
 
@@ -352,7 +375,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] 4단 / 부적합(옥상 등) 자동 제거<span style="float:right">v11.0.19</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] 4단 / 부적합(옥상 등) 자동 제거<span style="float:right">v11.0.20</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
