@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.20.3 (UI 재설계 - 박스 카드 4단) */
+/* 박스별 검수 v11.0.21 (LLM이 현재+가용 보고 최종 결과 결정) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -60,7 +60,7 @@ async function llmCall(model,prompt){
     var r=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
       headers:{'x-api-key':KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','content-type':'application/json'},
-      body:JSON.stringify({model:model,max_tokens:2000,messages:[{role:'user',content:prompt}]})
+      body:JSON.stringify({model:model,max_tokens:2500,messages:[{role:'user',content:prompt}]})
     });
     var j=await r.json();
     if(!j.content||!j.content[0])return null;
@@ -76,112 +76,119 @@ async function llmCall(model,prompt){
 }
 
 function buildBasePrompt(name,reqs){
-  var pt='하나사인몰 사인물 상품에 적합한 노출 공간을 박스별로 추천.\n상품명: "'+name+'"\n\n';
-  pt+='1단계: 상품명 의미 분석 (가장 중요)\n';
-  pt+='상품명에 있는 키워드로 이 사인물이 "어디에 / 어떤 상황에" 쓰이는지 먼저 판단:\n';
-  pt+=' - 미끄럼틀/시소/그네/놀이터/어린이놀이 → 놀이터/공원, 어린이 시설\n';
+  var pt='하나사인몰 사인물 상품에 진짜 적합한 노출 공간을 박스별로 결정.\n상품명: "'+name+'"\n\n';
+  pt+='[1단계] 상품명 의미 분석 (가장 중요)\n';
+  pt+='상품명을 보고 이 사인물이 "어디에 / 어떤 상황에" 노출되어야 하는지 핵심 키워드로 판단:\n';
+  pt+=' - 미끄럼틀/시소/그네/놀이터 → 놀이터/공원, 어린이 시설 (주차장 X)\n';
   pt+=' - 주차/차량/요일제/2부제 → 주차장, 공영주차장, 도로/인도, 건물외부\n';
   pt+=' - 소방/화재/방화/소화기 → 통로, 비상구, 건물외부, 주차장\n';
-  pt+=' - 산사태/산불/위험지역/위험경고 → 조경시설, 건물외부, 도로/인도\n';
+  pt+=' - 산사태/산불/위험지역 → 조경시설, 건물외부, 도로/인도\n';
   pt+=' - 단지/관리/거주자/입주민 → 아파트 공용통로, 관리사무소, 커뮤니티시설\n';
   pt+=' - 어린이/노인/임산부/약자 → 학교, 유치원, 공용통로, 입구\n';
-  pt+=' - 캠핑/야외/공원이용 → 놀이터/공원, 조경시설, 건물외부\n';
-  pt+=' - 안내/위치/방향 → 카운터/인포메이션, 공용통로, 입구\n';
-  pt+=' - 금지/주의/경고 → 상품명의 주제에 맞는 공간 (주차금지면 주차장)\n';
-  pt+='\n2단계: 추천 원칙\n';
-  pt+=' - 상품명 키워드와 무관한 공간은 추천 X (예: "미끄럼틀 안내판"에 주차장 X)\n';
-  pt+=' - 5개 미만 OK. 억지로 5개 채우지 말 것.\n';
+  pt+=' - 캠핑/공원이용 → 놀이터/공원, 조경시설\n';
+  pt+='\n[2단계] 핵심 룰\n';
+  pt+=' - 상품명 키워드와 무관한 공간은 절대 X (예: "미끄럼틀"에 주차장 X)\n';
+  pt+=' - 5개 미만 OK. 억지로 채우지 말 것.\n';
   pt+=' - 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장\n';
-  pt+='\n3단계: 업종별 박스 (catT)\n';
-  pt+=' - 그 업종 시설에서 이 사인물이 실제 노출될 위치만\n';
-  pt+=' - 미끄럼틀 안내판이 회사 박스에 들어간다면 → 회사 안의 야외 시설(있는 경우만), 보통 회사는 부적합\n\n';
-  pt+='박스별 가용 공간:\n';
-  reqs.forEach(r=>{pt+='- ['+r.label+'] 가용: ['+r.options.join(', ')+']\n';});
-  pt+='\n응답: JSON만 (적합 라벨만, 5개 미만 OK)\n{\n';
-  reqs.forEach((r,i)=>{pt+='  "'+r.key+'": [...]'+(i<reqs.length-1?',':'')+'\n';});
+  pt+='\n[3단계] 박스별 응답 — 각 박스의 "최종 적합 공간 list"\n';
+  pt+=' - 현재 체크된 공간이라도 부적합하면 응답에서 빼기 (제거됨)\n';
+  pt+=' - 가용 공간 중에 적합하면 응답에 포함 (추가됨)\n\n';
+  pt+='박스 정보 (현재 체크 + 가용):\n';
+  reqs.forEach(r=>{
+    pt+='- ['+r.label+']\n';
+    pt+='  현재 체크: ['+(r.current.length?r.current.join(', '):'없음')+']\n';
+    pt+='  가용 공간: ['+r.options.join(', ')+']\n';
+  });
+  pt+='\n응답: JSON만 (각 박스의 최종 적합 공간 라벨 list)\n{\n';
+  reqs.forEach((r,i)=>{pt+='  "'+r.key+'": [...최종 적합 라벨]'+(i<reqs.length-1?',':'')+'\n';});
   pt+='}';
   return pt;
 }
 
 async function llmJudge(name,reqs){
   if(!KEY||reqs.length===0)return null;
-  // 1차: Haiku 빠른 후보
   var basePt=buildBasePrompt(name,reqs);
   var haikuResult=await llmCall('claude-haiku-4-5-20251001',basePt);
   
-  // 2차: Sonnet 검증 (Haiku 결과 + 부적합 거름 + 최종 결정)
-  var verifyPt='하나사인몰 사인물 상품의 박스별 공간 추천 검증.\n상품명: "'+name+'"\n\n';
-  verifyPt+='1차(Haiku) 추천 결과:\n'+JSON.stringify(haikuResult||{},null,2)+'\n\n';
-  verifyPt+='검증 원칙 (엄격):\n';
-  verifyPt+='1. 상품명 핵심 키워드와 매칭되는 공간만 OK (예: "미끄럼틀"에 주차장 X)\n';
-  verifyPt+='2. 1차에서 추천한 공간이 상품 주제와 무관하면 제거\n';
-  verifyPt+='3. 옥상/수영장/화장실/키즈룸/독서실/헬스장/골프연습장 절대 X\n';
-  verifyPt+='4. 5개 미만 OK. 억지로 채우지 말 것.\n';
-  verifyPt+='5. 누락된 더 적합한 공간이 있으면 추가\n\n';
-  verifyPt+='박스별 가용 공간 (1차에서 누락된 좋은 항목 다시 검토):\n';
-  reqs.forEach(r=>{verifyPt+='- ['+r.label+'] 가용: ['+r.options.join(', ')+']\n';});
-  verifyPt+='\n최종 응답: JSON만\n{\n';
-  reqs.forEach((r,i)=>{verifyPt+='  "'+r.key+'": [...최종 적합 라벨]'+(i<reqs.length-1?',':'')+'\n';});
+  var verifyPt='상품명: "'+name+'"\n\n1차(Haiku) 결과:\n'+JSON.stringify(haikuResult||{},null,2)+'\n\n';
+  verifyPt+='검증 (Sonnet, 엄격):\n';
+  verifyPt+='1. 상품명 핵심 키워드와 매칭되는 공간만 응답\n';
+  verifyPt+='2. 1차에서 부적절한 공간 추천했으면 빼기 (예: "미끄럼틀"에 주차장 → 빼기)\n';
+  verifyPt+='3. 1차에서 누락된 더 적합한 공간 있으면 추가\n';
+  verifyPt+='4. 옥상/수영장/화장실 등 절대 X\n';
+  verifyPt+='5. 5개 미만 OK\n\n';
+  verifyPt+='박스 정보:\n';
+  reqs.forEach(r=>{
+    verifyPt+='- ['+r.label+'] 현재:['+(r.current.join(', ')||'없음')+'] / 가용:['+r.options.join(', ')+']\n';
+  });
+  verifyPt+='\n최종: JSON만\n{\n';
+  reqs.forEach((r,i)=>{verifyPt+='  "'+r.key+'": [...]'+(i<reqs.length-1?',':'')+'\n';});
   verifyPt+='}';
-  
   var sonnetResult=await llmCall('claude-sonnet-4-6',verifyPt);
   return sonnetResult||haikuResult;
 }
 
 async function buildPlan(s1,s2,name){
-  // 각 박스마다 plan 객체: {current:[], remove:[], add:[], result:[], box, catX, catName, kind, judge}
   var plans=[];
   var allBoxes=s1.concat(s2);
   
-  // 부적합 제거 후보
+  // 모든 박스에 대해 plan 초기화 + LLM 요청 list
+  var reqs=[];
   allBoxes.forEach(b=>{
     if(b.ghost)return;
+    var current=b.d5items.map(i=>i.label);
+    var allOpts=b.boxRef.items.filter(i=>i.dim==='05').map(i=>i.label);
     var p={kind:b.kind,box:b.box,catX:b.catX,catName:b.catName,judge:b.judge,
-      current:b.d5items.map(i=>i.label),
-      remove:b.bad.map(i=>i.label),
-      removeItems:b.bad,
-      addItems:[],add:[]};
+      current:current,
+      currentItems:b.d5items,
+      allItems:b.boxRef.items.filter(i=>i.dim==='05'),
+      remove:[],removeItems:[],
+      add:[],addItems:[]};
     plans.push(p);
-  });
-  
-  // LLM 추천 박스 list
-  var reqs=[];
-  plans.forEach(p=>{
-    var b=allBoxes.find(x=>x.kind===p.kind&&x.box===p.box);
-    var chk=b.d5items.filter(i=>!isBad(i.label)).length;
-    if(chk>=5)return;
-    var opts=b.boxRef.items.filter(i=>i.dim==='05'&&!i.checked&&!isBad(i.label)).map(i=>i.label);
-    if(opts.length===0)return;
-    reqs.push({key:p.kind+'|'+p.box,label:(p.kind==='cat1'?'카테고리 ':'업종 ')+p.catX+' '+p.catName,options:opts,need:5-chk,plan:p,boxRef:b.boxRef});
+    reqs.push({
+      key:p.kind+'|'+p.box,
+      label:(p.kind==='cat1'?'카테고리 ':'업종 ')+p.catX+' '+p.catName,
+      current:current,
+      options:allOpts,
+      plan:p
+    });
   });
   
   var llmResult=null;
   if(LLM_ENABLED&&reqs.length>0){llmResult=await llmJudge(name||'',reqs);}
   
+  // LLM 결과 = 박스별 최종 적합 공간 list
+  // (현재 - 최종) = remove, (최종 - 현재) = add
   reqs.forEach(req=>{
-    var picks=(llmResult&&llmResult[req.key])?llmResult[req.key]:null;
-    var added={};
-    if(picks&&Array.isArray(picks)){
-      picks.slice(0,5).forEach(lbl=>{
-        if(isBad(lbl))return;
-        var it=req.boxRef.items.find(i=>i.dim==='05'&&i.label===lbl&&!i.checked&&!added[i.sub]);
-        if(it){added[it.sub]=1;req.plan.add.push(lbl);req.plan.addItems.push(it);}
+    var p=req.plan;
+    var finalLabels=(llmResult&&llmResult[req.key]&&Array.isArray(llmResult[req.key]))?llmResult[req.key]:null;
+    
+    if(finalLabels===null){
+      // LLM 실패 → 부적합만 제거 (안전 fallback)
+      p.currentItems.filter(i=>isBad(i.label)).forEach(it=>{p.remove.push(it.label);p.removeItems.push(it);});
+    } else {
+      // BAD_SPACES는 LLM 응답에 있어도 제외
+      finalLabels=finalLabels.filter(l=>!isBad(l));
+      
+      // 제거: 현재 중 최종에 없는 것 (BAD_SPACES 자동 포함)
+      p.currentItems.forEach(it=>{
+        if(finalLabels.indexOf(it.label)<0){
+          p.remove.push(it.label);p.removeItems.push(it);
+        }
       });
-    } else if(!llmResult){
-      req.boxRef.items.filter(i=>i.dim==='05'&&!i.checked&&!isBad(i.label)&&!added[i.sub]).forEach(it=>{
-        if(Object.keys(added).length>=req.need)return;
-        added[it.sub]=1;req.plan.add.push(it.label);req.plan.addItems.push(it);
+      // 추가: 최종 중 현재에 없는 것
+      finalLabels.forEach(lbl=>{
+        if(p.current.indexOf(lbl)>=0)return; // 이미 있음
+        var it=p.allItems.find(i=>i.label===lbl&&!i.checked);
+        if(it){p.add.push(lbl);p.addItems.push(it);}
       });
     }
+    
+    // 결과 = 현재 - 제거 + 추가
+    p.result=p.current.filter(c=>p.remove.indexOf(c)<0).concat(p.add);
   });
   
-  // 결과 = 현재 - 제거 + 추가
-  plans.forEach(p=>{
-    var rem=p.remove;
-    p.result=p.current.filter(c=>rem.indexOf(c)<0).concat(p.add);
-  });
-  
-  // catO 박스에 업종(dim 04) 9개 추가도 actions에 포함
+  // catO 박스에 업종(dim 04) 9개 추가
   var indActions=[];
   s1.forEach(b=>{
     if(b.ghost)return;
@@ -256,7 +263,7 @@ async function fetchAllPagesRgrs(catCode){
       var added=0;
       rows.forEach(r=>{if(!all[r.rgr]){all[r.rgr]=1;out.push(r);added++;}});
       if(added===0)break;
-      var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent='페이지 '+pp+' 수집 중... 누적 '+out.length+'건';
+      var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent='페이지 '+pp+' 수집... 누적 '+out.length+'건';
     }catch(e){break;}
   }
   return out;
@@ -299,11 +306,11 @@ function attachCtrls(){
   var hdr=p.querySelector('.__bhdr');if(hdr)makeDraggable(hdr);
 }
 var hdrCtrls='<button id="__bmn" style="padding:7px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:14px">—</button><button id="__bcl" style="padding:7px 16px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:14px">닫기 X</button>';
+var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 Haiku→Sonnet</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰</span>';
 
-// 박스 카드 렌더링 — 4단 (현재/제거/추가/결과)
 function renderBoxCard(plan){
   var changed=plan.remove.length>0||plan.add.length>0;
-  var bgC=plan.judge==='OK'&&!changed?'#e8f5e9':(plan.judge==='MISMATCH'?'#ffe0e0':'#fff8dc');
+  var bgC=plan.judge==='OK'&&!changed?'#e8f5e9':(plan.remove.length>0?'#ffe0e0':(plan.add.length>0?'#fff8dc':'#f5f5f5'));
   var icon=plan.kind==='cat1'?'📦':'🏢';
   var prefix=plan.kind==='cat1'?'카테고리':'업종';
   var H='<div style="border:1px solid #ccc;border-radius:6px;padding:10px;margin:6px 0;background:'+bgC+';font-size:13px">';
@@ -316,10 +323,9 @@ function renderBoxCard(plan){
   return H;
 }
 
-p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'Haiku→Sonnet 이중검증 중':'룰 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
+p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'Haiku→Sonnet 검증 중':'룰 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
 attachCtrls();
 
-// === 단건 (편집 페이지) ===
 if(isE){
   var rgr=(url.match(/RgrCode=([^&]+)/)||[])[1]||'';
   var nm=((document.querySelector('input[name="GoodsName"]')||{}).value)||'';
@@ -327,8 +333,7 @@ if(isE){
   var j=rowJ(rd.s1,rd.s2);
   var delN=rd.actions.filter(a=>a.op==='del').length;
   var addN=rd.actions.filter(a=>a.op==='add').length;
-  var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 Sonnet 4.6</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰</span>';
-  var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:bold">'+ICO[j]+' '+(rd.name||'(없음)')+llmBadge+'</div><div style="font-size:13px;opacity:.85">'+rgr+' · 종합 '+KOR[j]+' · ❌'+delN+' / ➕'+addN+'</div></div><div style="display:flex;gap:6px">'+(rd.actions.length>0?'<button id="__bfx" style="padding:8px 16px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:14px">자동수정 '+rd.actions.length+'</button>':'')+hdrCtrls+'</div></div>';
+  var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:bold">'+ICO[j]+' '+(rd.name||'(없음)')+llmBadge+'</div><div style="font-size:13px;opacity:.85">'+rgr+' · '+KOR[j]+' · ❌'+delN+' / ➕'+addN+'</div></div><div style="display:flex;gap:6px">'+(rd.actions.length>0?'<button id="__bfx" style="padding:8px 16px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:14px">자동수정 '+rd.actions.length+'</button>':'')+hdrCtrls+'</div></div>';
   H+='<div class="__bbody" style="padding:14px;overflow:auto;flex:1">';
   H+='<div style="font-size:15px;font-weight:bold;color:#305496;margin:8px 0 6px">📦 상품별 카테고리</div>';
   rd.s1.filter(b=>!b.ghost).forEach(b=>{
@@ -344,7 +349,7 @@ if(isE){
   p.innerHTML=H;attachCtrls();
   var bfx=document.getElementById('__bfx');
   if(bfx)bfx.onclick=async function(){
-    if(!confirm('자동수정 실행?\n❌ 제거 '+delN+' + ➕ 추가 '+addN))return;
+    if(!confirm('자동수정?\n❌ 제거 '+delN+' + ➕ 추가 '+addN))return;
     bfx.textContent='수정중...';bfx.disabled=true;
     var r=await runFix(rgr,rd.actions);
     bfx.textContent='완료 '+r.success+'/'+r.total;
@@ -353,7 +358,6 @@ if(isE){
   return;
 }
 
-// === 일괄 (목록 페이지) ===
 var rows=Array.from(document.querySelectorAll('tr')).map(tr=>{
   var m=tr.innerText.match(/(\d{12}_\d{4})/);
   if(!m)return null;
@@ -363,7 +367,6 @@ var rows=Array.from(document.querySelectorAll('tr')).map(tr=>{
 }).filter(x=>x);
 var seen={},rgrs=[];
 rows.forEach(r=>{if(!seen[r.rgr]){seen[r.rgr]=1;rgrs.push(r);}});
-// rgrs 제한 제거 (현재 페이지 모든 RgrCode 처리)
 if(rgrs.length===0){p.innerHTML='<div style="padding:30px"><h3>상품코드 없음</h3></div>';return;}
 
 var res=[];
@@ -381,10 +384,9 @@ function render(){
   var totAdd=res.reduce((s,r)=>s+(r.actions?r.actions.filter(a=>a.op==='add').length:0),0);
   var cat=(url.match(/CodeT1_1=([^&]+)/)||[])[1]||'?';
   var pg=(url.match(/page=(\d+)/)||[])[1]||'1';
-  var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 Sonnet 4.6</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰</span>';
   var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">';
   H+='<div><div style="font-size:18px;font-weight:bold">📋 통합 검수 - '+res.length+'건'+llmBadge+'</div>';
-  H+='<div style="font-size:13px;opacity:.85">'+(CAT_NAMES[cat]||'?')+'('+cat+') / '+pg+'p · ✅'+st.OK+' / ⚠'+st.PARTIAL+' / ❌'+st.EMPTY+(st.MISMATCH?' / 🚫'+st.MISMATCH:'')+(st.ERR?' / err'+st.ERR:'')+' · 변경 ❌'+totDel+' ➕'+totAdd+'</div></div>';
+  H+='<div style="font-size:13px;opacity:.85">'+(CAT_NAMES[cat]||'?')+'('+cat+') / '+pg+'p · ✅'+st.OK+' / ⚠'+st.PARTIAL+' / ❌'+st.EMPTY+(st.MISMATCH?' / 🚫'+st.MISMATCH:'')+(st.ERR?' / err'+st.ERR:'')+' · ❌'+totDel+' ➕'+totAdd+'</div></div>';
   H+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
   H+='<button data-f="all" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#fff;color:#305496;font-size:13px">전체</button>';
   H+='<button data-f="fix" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:13px">수정필요</button>';
@@ -419,7 +421,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] 4단 / 부적합(옥상 등) 자동 제거<span style="float:right">v11.0.20.3</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · LLM이 상품명+현재+가용 보고 부적합 자동 제거<span style="float:right">v11.0.21</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
@@ -445,9 +447,10 @@ function render(){
       else{b.style.background='transparent';b.style.color='#fff';}
     });
   }
+  Array.from(p.querySelectorAll('.__bf')).forEach(b=>{b.onclick=function(){flt(b.getAttribute('data-f'));};});
   var ball=document.getElementById('__ball');
   if(ball)ball.onclick=async function(){
-    if(!confirm('현재 카테고리의 전체 페이지를 일괄 검수할까요?\n(LLM 호출 = 페이지 X 30건)'))return;
+    if(!confirm('전체 페이지 일괄 검수?'))return;
     p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">📂 전체 페이지 수집 중...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
     attachCtrls();
     var allRgrs=await fetchAllPagesRgrs(cat);
@@ -459,7 +462,6 @@ function render(){
     }
     res=newRes;window.__bapResults=res;render();
   };
-    Array.from(p.querySelectorAll('.__bf')).forEach(b=>{b.onclick=function(){flt(b.getAttribute('data-f'));};});
   Array.from(p.querySelectorAll('.__brfx')).forEach(b=>{
     b.onclick=async function(){
       var idx=parseInt(b.getAttribute('data-fix'),10),r=res[idx];
@@ -472,8 +474,7 @@ function render(){
   });
   var bfa=document.getElementById('__bfa');
   if(bfa)bfa.onclick=async function(){
-    var totalAct=totDel+totAdd;
-    if(!confirm('전체 자동수정?\n❌ 제거 '+totDel+' + ➕ 추가 '+totAdd))return;
+    if(!confirm('전체 자동수정?\n❌ '+totDel+' + ➕ '+totAdd))return;
     bfa.textContent='수정중...';bfa.disabled=true;
     for(var k=0;k<res.length;k++){
       var r=res[k];if(!r.actions||r.actions.length===0)continue;
