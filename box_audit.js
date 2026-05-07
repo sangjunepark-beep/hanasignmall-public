@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.24 (LLM이 현재+가용 보고 최종 결과 결정) */
+/* 박스별 검수 v11.0.25 (이중 LLM 강화 프롬프트, 룰 제거) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -12,29 +12,6 @@ var CAT_NAMES={'01':'게시판','02':'안내판','04':'입간판','05':'현수�
 var T_NAMES={'01':'학교/학원','02':'식당/카페','03':'아파트','04':'호텔/펜션','05':'병원/요양시설','06':'회사/공장','07':'공공기관','08':'헬스/레저','09':'기타업종'};
 var BAD_SPACES=['옥상','수영장/사우나','수영장','사우나','키즈룸','화장실','독서실','골프연습장','헬스장'];
 function isBad(l){return BAD_SPACES.indexOf(l)>=0;}
-var STRICT_RULES=[
-  {kw:['미끄럼틀','시소','그네','놀이기구','놀이시설','놀이터'],allow:['놀이터/공원','조경시설','운동장','놀이이시설','커뮤니티시설']},
-  {kw:['주차','차량','요일제','2부제','과속','속도'],allow:['주차장','공영주차장','도로/인도','건물외부']},
-  {kw:['소방','화재','방화','소화기','소방차'],allow:['주차장','공용통로','비상구','건물외부','공용통로,로비','로비']},
-  {kw:['단지','거주자','입주민'],allow:['공용통로','관리사무소/사무실','관리사무소','커뮤니티시설','입구','로비','공용통로,로비','주차장']},
-  {kw:['어린이보호','어린이안전','어린이승강','노인보호','임산부','승강장','어린이'],allow:['학교(초/중/고)','유치원/학원','공용통로','입구','놀이터/공원','커뮤니티시설','교문','교실/실습실']},
-  {kw:['산사태','산불','위험지역','침수'],allow:['조경시설','건물외부','도로/인도','놀이터/공원']},
-  {kw:['양봉','산림'],allow:['조경시설','건물외부','놀이터/공원']},
-  {kw:['캠핑','야영'],allow:['놀이터/공원','조경시설','건물외부']},
-  {kw:['전기차','충전소'],allow:['주차장','공영주차장','건물외부']},
-  {kw:['반려동물','애견','펫'],allow:['놀이터/공원','조경시설','건물외부','공용통로']}
-];
-function applyStrictRule(name,finalLabels,allOptions){
-  if(!name)return finalLabels;
-  for(var i=0;i<STRICT_RULES.length;i++){
-    var r=STRICT_RULES[i];
-    if(r.kw.some(k=>name.indexOf(k)>=0)){
-      var allowed=r.allow.filter(s=>allOptions.indexOf(s)>=0);
-      return allowed.length>0?allowed:finalLabels;
-    }
-  }
-  return finalLabels;
-}
 
 function analyzeFull(d){
   var cb=Array.from(d.querySelectorAll('input[type=checkbox]'));
@@ -83,7 +60,7 @@ async function llmCall(model,prompt){
     var r=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
       headers:{'x-api-key':KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','content-type':'application/json'},
-      body:JSON.stringify({model:model,max_tokens:2500,messages:[{role:'user',content:prompt}]})
+      body:JSON.stringify({model:model,max_tokens:3000,messages:[{role:'user',content:prompt}]})
     });
     var j=await r.json();
     if(!j.content||!j.content[0])return null;
@@ -99,47 +76,62 @@ async function llmCall(model,prompt){
 }
 
 function buildBasePrompt(name,reqs){
-  var pt='하나사인몰 사인물 상품에 진짜 적합한 노출 공간을 박스별로 결정.\n상품명: "'+name+'"\n\n';
-  pt+='[1단계] 상품명 의미 분석 (가장 중요)\n';
-  pt+='상품명을 보고 이 사인물이 "어디에 / 어떤 상황에" 노출되어야 하는지 핵심 키워드로 판단:\n';
-  pt+=' - 미끄럼틀/시소/그네/놀이터 → 놀이터/공원, 어린이 시설 (주차장 X)\n';
-  pt+=' - 주차/차량/요일제/2부제 → 주차장, 공영주차장, 도로/인도, 건물외부\n';
-  pt+=' - 소방/화재/방화/소화기 → 통로, 비상구, 건물외부, 주차장\n';
-  pt+=' - 산사태/산불/위험지역 → 조경시설, 건물외부, 도로/인도\n';
-  pt+=' - 단지/관리/거주자/입주민 → 아파트 공용통로, 관리사무소, 커뮤니티시설\n';
-  pt+=' - 어린이/노인/임산부/약자 → 학교, 유치원, 공용통로, 입구\n';
-  pt+=' - 캠핑/공원이용 → 놀이터/공원, 조경시설\n';
-  pt+='\n[2단계] 핵심 룰 (사용자 검색 관점)\n';
-  pt+=' - 자사몰 검색 사용자가 그 공간 필터를 선택했을 때, 이 상품이 결과로 나오면 합리적인가?\n';
-  pt+='   예: "주차장 필터" 선택한 사람에게 "미끄럼틀 안내판"이 나오면 무관한 결과 → 주차장 빼야 함\n';
-  pt+='   예: "놀이터/공원 필터" 선택한 사람에게 "미끄럼틀 안내판" 나오면 적합 → 유지\n';
-  pt+=' - 상품명 핵심 키워드와 직접 연관 있는 공간만 응답\n';
-  pt+=' - 1~3개여도 OK. 5개 채우려고 무관한 공간 추가 X\n';
-  pt+=' - 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장\n';
-  pt+=' - 일반 안내/금지/주의 사인물도 상품명의 주제에 따름 (예: "미끄럼틀 화상주의" → 놀이터만, 주차장 X)\n';
-  pt+='\n[3단계] 구체 예시 (이대로 따라할 것)\n';
-  pt+='예시 1: 상품 "미끄럼틀 화상주의 안내판"\n';
-  pt+='  박스 [카테고리 02 안내판] 가용 [주차장, 계단, 관리사무소, 조경시설, 놀이터/공원, 카운터]\n';
-  pt+='  → 적합 응답: ["놀이터/공원", "조경시설"]\n';
-  pt+='  → 절대 X: 주차장, 계단, 관리사무소, 카운터 (미끄럼틀 안내판은 놀이터에만 노출)\n';
-  pt+='예시 2: 상품 "2부제 차량 요일제 입간판"\n';
-  pt+='  박스 [카테고리 04 입간판] 가용 [주차장, 카운터, 도로/인도, 놀이터/공원, 공용통로]\n';
-  pt+='  → 적합 응답: ["주차장", "도로/인도", "공영주차장"]\n';
-  pt+='  → 절대 X: 카운터, 놀이터/공원\n';
-  pt+='예시 3: 상품 "소방시설 안내판"\n';
-  pt+='  → 적합: ["공용통로", "비상구", "건물외부"]\n';
-  pt+='  → X: 놀이터/공원, 운동장\n\n';
-  pt+='[4단계] 박스별 응답 작성\n';
-  pt+=' - 각 박스의 "최종 적합 공간 list" (라벨 그대로)\n';
-  pt+=' - 현재 체크된 공간이라도 위 원칙대로 부적합하면 빼기\n\n';
-  pt+='박스 정보 (현재 체크 + 가용):\n';
+  var pt='# 임무\n';
+  pt+='하나사인몰의 사인물 상품을 자사몰 "공간 필터"에 매핑하는 전문가다.\n';
+  pt+='자사몰 사용자가 특정 공간(예: 주차장)을 클릭했을 때, 그 공간과 무관한 상품이 나오면 사용자 경험이 망가진다.\n';
+  pt+='따라서 "이 상품이 그 공간에서 실제로 쓰일 사인물인가?"를 엄격하게 판단한다.\n\n';
+  pt+='# 상품명\n"'+name+'"\n\n';
+  pt+='# 작업 절차 (반드시 순서대로)\n';
+  pt+='## STEP 1: 상품명 의미 분해\n';
+  pt+='상품명에서 다음 3가지를 추출:\n';
+  pt+=' (1) 주제: 이 사인물이 알리는 내용 (예: "미끄럼틀 화상주의" → 미끄럼틀 안전)\n';
+  pt+=' (2) 사용 장소: 이 사인물이 실제 부착될 장소 (예: "미끄럼틀이 있는 곳" = 놀이터, 어린이시설)\n';
+  pt+=' (3) 대상: 이 사인물이 경고/안내하는 대상 (예: 어린이, 보호자)\n\n';
+  pt+='## STEP 2: 무관한 공간 식별 (가장 중요!)\n';
+  pt+='가용 공간 list 중에서 "STEP 1의 사용 장소와 무관한 공간"을 모두 골라낸다.\n';
+  pt+='이 공간들은 최종 결과에서 빠진다. 절대 추가하지 않는다.\n';
+  pt+='판단 기준: 자사몰 사용자가 그 공간 필터를 눌렀을 때, 이 상품이 결과로 나오면 어색한가?\n';
+  pt+=' - 어색하다 → 무관 → 빼기\n';
+  pt+=' - 자연스럽다 → 적합 → 유지\n\n';
+  pt+='## STEP 3: 적합 공간 선정\n';
+  pt+='가용 공간 중 "STEP 1의 사용 장소와 직접 연관된 공간"만 선정. 1~5개. 5개 강박 X.\n';
+  pt+='연관 없으면 빈 list [] 반환해도 된다.\n\n';
+  pt+='# 절대 규칙 (위반 시 실패)\n';
+  pt+='1. 상품 주제와 무관한 공간은 무조건 결과에서 제외 (현재 체크되어 있어도 빼기)\n';
+  pt+='2. 5개 채우려고 무관한 공간 추가 금지\n';
+  pt+='3. 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장\n';
+  pt+='4. 가용 공간 list에 없는 라벨 절대 응답 금지\n\n';
+  pt+='# 검증 체크리스트 (응답 전 자체 점검)\n';
+  pt+='각 박스의 최종 답을 정하기 전에 박스마다 점검:\n';
+  pt+=' Q1. "상품명: \''+name+'\'"이 이 공간에 부착되는 게 자연스러운가?\n';
+  pt+=' Q2. 자사몰에서 이 공간 필터로 검색한 사용자가 이 상품을 보고 만족할까?\n';
+  pt+=' 둘 중 하나라도 NO → 그 공간은 결과에서 제외\n\n';
+  pt+='# 예시 (이대로 학습)\n';
+  pt+='예시 A: "미끄럼틀 화상주의 안내판"\n';
+  pt+='  STEP 1: 주제=미끄럼틀 안전, 사용 장소=놀이터/어린이시설, 대상=어린이/보호자\n';
+  pt+='  가용=[주차장, 계단, 관리사무소, 놀이터/공원, 운동장, 카운터, 입구]\n';
+  pt+='  STEP 2 무관: 주차장(미끄럼틀 없음), 계단(아님), 관리사무소(아님), 카운터(아님), 입구(아님)\n';
+  pt+='  STEP 3 적합: ["놀이터/공원", "운동장"]\n';
+  pt+='  ⚠ 현재 체크에 "주차장"이 있어도 빼야 한다. 미끄럼틀과 주차장은 무관.\n\n';
+  pt+='예시 B: "차량 2부제 안내 입간판"\n';
+  pt+='  STEP 1: 주제=차량 운행 규칙, 사용 장소=주차장/도로, 대상=운전자\n';
+  pt+='  가용=[주차장, 도로/인도, 공영주차장, 놀이터/공원, 카운터, 공용통로]\n';
+  pt+='  STEP 2 무관: 놀이터/공원(차량 없음), 카운터(아님), 공용통로(아님)\n';
+  pt+='  STEP 3 적합: ["주차장", "도로/인도", "공영주차장"]\n\n';
+  pt+='예시 C: "소방시설 위치 안내판"\n';
+  pt+='  STEP 1: 주제=소방시설 위치, 사용 장소=건물 내 비상구/통로, 대상=거주자/방문자\n';
+  pt+='  가용=[공용통로, 비상구, 건물외부, 놀이터/공원, 운동장, 주차장]\n';
+  pt+='  STEP 2 무관: 놀이터/공원(소방시설 X), 운동장(X)\n';
+  pt+='  STEP 3 적합: ["공용통로", "비상구", "건물외부", "주차장"] (주차장도 소방시설 있음)\n\n';
+  pt+='# 박스 정보\n';
   reqs.forEach(r=>{
-    pt+='- ['+r.label+']\n';
-    pt+='  현재 체크: ['+(r.current.length?r.current.join(', '):'없음')+']\n';
-    pt+='  가용 공간: ['+r.options.join(', ')+']\n';
+    pt+='## ['+r.label+']\n';
+    pt+='현재 체크: ['+(r.current.length?r.current.join(', '):'없음')+']\n';
+    pt+='가용 공간: ['+r.options.join(', ')+']\n';
   });
-  pt+='\n응답: JSON만 (각 박스의 최종 적합 공간 라벨 list)\n{\n';
-  reqs.forEach((r,i)=>{pt+='  "'+r.key+'": [...최종 적합 라벨]'+(i<reqs.length-1?',':'')+'\n';});
+  pt+='\n# 응답 형식\n';
+  pt+='박스별로 STEP 1~3을 거친 최종 적합 공간 라벨 list. JSON만 응답.\n{\n';
+  reqs.forEach((r,i)=>{pt+='  "'+r.key+'": [...최종 적합 라벨, 가용 공간 list 중에서만]'+(i<reqs.length-1?',':'')+'\n';});
   pt+='}';
   return pt;
 }
@@ -149,20 +141,42 @@ async function llmJudge(name,reqs){
   var basePt=buildBasePrompt(name,reqs);
   var haikuResult=await llmCall('claude-haiku-4-5-20251001',basePt);
   
-  var verifyPt='상품명: "'+name+'"\n\n1차(Haiku) 결과:\n'+JSON.stringify(haikuResult||{},null,2)+'\n\n';
-  verifyPt+='검증 원칙 (사용자 검색 관점, 엄격):\n';
-  verifyPt+='1. 자사몰 사용자가 그 공간 필터로 검색했을 때 이 상품이 나오는 게 합리적인가?\n';
-  verifyPt+='   - "미끄럼틀 안내판"을 "주차장" 필터로 찾는 사람이 있을까? 없으면 빼기\n';
-  verifyPt+='2. 1차에서 추천한 공간 중 상품 주제와 무관한 것 모두 빼기\n';
-  verifyPt+='3. 1~3개로 정확히 좁혀도 OK. 5개 강박 X\n';
-  verifyPt+='4. 옥상/수영장/화장실 등 절대 X\n';
-  verifyPt+='5. 일반 사인물(안내판/표지판/스티커)도 상품명 주제 따라 좁게 판단\n\n';
-  verifyPt+='박스 정보:\n';
+  var verifyPt='# 임무\n';
+  verifyPt+='Haiku가 1차 추천한 공간을 엄격히 재검증하는 Sonnet 검수자다.\n';
+  verifyPt+='Haiku는 종종 "가용 공간이니까"라는 이유로 무관한 공간을 남긴다. 너는 그걸 잡아내야 한다.\n\n';
+  verifyPt+='# 상품명\n"'+name+'"\n\n';
+  verifyPt+='# Haiku 1차 결과\n'+JSON.stringify(haikuResult||{},null,2)+'\n\n';
+  verifyPt+='# 재검증 절차\n';
+  verifyPt+='## 1. 상품 주제 확정\n';
+  verifyPt+='상품명: "'+name+'"의 핵심 주제(무엇을 알리는가)와 사용 장소(어디 부착되는가)를 다시 확인.\n\n';
+  verifyPt+='## 2. Haiku 결과 1개씩 검증\n';
+  verifyPt+='Haiku가 추천한 각 공간에 대해 자문:\n';
+  verifyPt+=' - "이 상품이 정말 [공간]에 부착될까?"\n';
+  verifyPt+=' - "자사몰에서 [공간] 필터를 누른 사용자가 이 상품을 보고 만족할까?"\n';
+  verifyPt+='둘 중 하나라도 NO → 그 공간 제거\n\n';
+  verifyPt+='## 3. 누락 확인\n';
+  verifyPt+='상품 주제와 직접 연관된 공간이 가용 list에 있는데 Haiku가 빠뜨렸으면 추가.\n\n';
+  verifyPt+='# 절대 규칙\n';
+  verifyPt+='1. "현재 체크되어 있으니 유지" 같은 이유로 무관한 공간 보존 금지\n';
+  verifyPt+='2. 5개 강박 금지. 1~3개로 좁혀도 OK. 0개도 OK.\n';
+  verifyPt+='3. 옥상/수영장/화장실/키즈룸/독서실/헬스장/골프연습장 절대 X\n';
+  verifyPt+='4. 가용 공간 list에 없는 라벨 응답 금지\n\n';
+  verifyPt+='# 자주 발생하는 오판 (반드시 잡아내기)\n';
+  verifyPt+=' - 어린이/놀이 관련 상품에 "주차장" 추천 → 제거\n';
+  verifyPt+=' - 차량 관련 상품에 "놀이터/공원" 추천 → 제거\n';
+  verifyPt+=' - 의료/병원 상품에 "운동장" 추천 → 제거\n';
+  verifyPt+=' - 식당 관련 상품에 "주차장/계단/공용통로" 추천 → 제거 (식당 내부만)\n';
+  verifyPt+=' - 일반적이라고 무조건 "공용통로/입구" 추가 금지\n\n';
+  verifyPt+='# 박스 정보\n';
   reqs.forEach(r=>{
-    verifyPt+='- ['+r.label+'] 현재:['+(r.current.join(', ')||'없음')+'] / 가용:['+r.options.join(', ')+']\n';
+    verifyPt+='## ['+r.label+']\n';
+    verifyPt+='현재 체크: ['+(r.current.join(', ')||'없음')+']\n';
+    verifyPt+='가용 공간: ['+r.options.join(', ')+']\n';
+    verifyPt+='Haiku 추천: '+JSON.stringify((haikuResult&&haikuResult[r.key])||[])+'\n';
   });
-  verifyPt+='\n최종: JSON만\n{\n';
-  reqs.forEach((r,i)=>{verifyPt+='  "'+r.key+'": [...]'+(i<reqs.length-1?',':'')+'\n';});
+  verifyPt+='\n# 응답 형식\n';
+  verifyPt+='재검증 후 최종 적합 공간 list. JSON만.\n{\n';
+  reqs.forEach((r,i)=>{verifyPt+='  "'+r.key+'": [...최종]'+(i<reqs.length-1?',':'')+'\n';});
   verifyPt+='}';
   var sonnetResult=await llmCall('claude-sonnet-4-6',verifyPt);
   return sonnetResult||haikuResult;
@@ -172,7 +186,6 @@ async function buildPlan(s1,s2,name){
   var plans=[];
   var allBoxes=s1.concat(s2);
   
-  // 모든 박스에 대해 plan 초기화 + LLM 요청 list
   var reqs=[];
   allBoxes.forEach(b=>{
     if(b.ghost)return;
@@ -197,36 +210,19 @@ async function buildPlan(s1,s2,name){
   var llmResult=null;
   if(LLM_ENABLED&&reqs.length>0){llmResult=await llmJudge(name||'',reqs);}
   
-  // LLM 결과 = 박스별 최종 적합 공간 list
-  // (현재 - 최종) = remove, (최종 - 현재) = add
   reqs.forEach(req=>{
     var p=req.plan;
     var finalLabels=(llmResult&&llmResult[req.key]&&Array.isArray(llmResult[req.key]))?llmResult[req.key]:null;
     
     if(finalLabels===null){
-      // LLM 실패 → STRICT_RULES 룰만 적용
-      var allOpts2=p.allItems.map(i=>i.label);
-      var ruled=applyStrictRule(name,null,allOpts2);
-      if(ruled){
-        // 룰 매칭됨: ruled에 없는 현재 항목 제거
-        p.currentItems.forEach(it=>{
-          if(ruled.indexOf(it.label)<0){p.remove.push(it.label);p.removeItems.push(it);}
-        });
-        ruled.forEach(lbl=>{
-          if(p.current.indexOf(lbl)>=0)return;
-          var it=p.allItems.find(i=>i.label===lbl&&!i.checked);
-          if(it){p.add.push(lbl);p.addItems.push(it);}
-        });
-      } else {
-        // 룰도 없음 → 부적합만 제거
-        p.currentItems.filter(i=>isBad(i.label)).forEach(it=>{p.remove.push(it.label);p.removeItems.push(it);});
-      }
+      // LLM 실패 → 부적합만 자동 제거 (안전 모드)
+      p.currentItems.filter(i=>isBad(i.label)).forEach(it=>{p.remove.push(it.label);p.removeItems.push(it);});
     } else {
       // BAD_SPACES는 LLM 응답에 있어도 제외
       finalLabels=finalLabels.filter(l=>!isBad(l));
-      // STRICT_RULES 강제 적용 (상품명 키워드 매칭 시 LLM 무시)
-      var allOpts=p.allItems.map(i=>i.label);
-      finalLabels=applyStrictRule(name,finalLabels,allOpts);
+      // 가용 공간 list에 없는 라벨 제거 (LLM 환각 방지)
+      var allOptLabels=p.allItems.map(i=>i.label);
+      finalLabels=finalLabels.filter(l=>allOptLabels.indexOf(l)>=0);
       
       // 제거: 현재 중 최종에 없는 것 (BAD_SPACES 자동 포함)
       p.currentItems.forEach(it=>{
@@ -236,13 +232,12 @@ async function buildPlan(s1,s2,name){
       });
       // 추가: 최종 중 현재에 없는 것
       finalLabels.forEach(lbl=>{
-        if(p.current.indexOf(lbl)>=0)return; // 이미 있음
+        if(p.current.indexOf(lbl)>=0)return;
         var it=p.allItems.find(i=>i.label===lbl&&!i.checked);
         if(it){p.add.push(lbl);p.addItems.push(it);}
       });
     }
     
-    // 결과 = 현재 - 제거 + 추가
     p.result=p.current.filter(c=>p.remove.indexOf(c)<0).concat(p.add);
   });
   
@@ -479,7 +474,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · LLM이 상품명+현재+가용 보고 부적합 자동 제거<span style="float:right">v11.0.24</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.25</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
