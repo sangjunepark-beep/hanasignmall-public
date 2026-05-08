@@ -200,7 +200,9 @@ async function buildPlan(s1,s2,name){
   var rowDbg={name:name,t:Date.now(),boxes:[]};
   var plans=[];
   var allBoxes=s1.concat(s2);
-  
+  var lawMode=isLawSign(name);
+  if(lawMode)console.log('[bap] 법령 사인물 모드 (LLM 우회):',name);
+
   var reqs=[];
   allBoxes.forEach(b=>{
     if(b.ghost)return;
@@ -223,8 +225,20 @@ async function buildPlan(s1,s2,name){
   });
   
   var llmResult=null;
-  if(LLM_ENABLED&&reqs.length>0){llmResult=await llmJudge(name||'',reqs);}
-  
+  if(lawMode){
+    // 법령 사인물 → LLM 호출 X. 가용 list ∩ COMMON_LAW_SPACES 채움
+    llmResult={};
+    reqs.forEach(req=>{
+      var p=req.plan;
+      var allOpts=p.allItems.map(i=>i.label);
+      var lawFit=COMMON_LAW_SPACES.filter(s=>allOpts.indexOf(s)>=0);
+      llmResult[req.key]=lawFit;
+    });
+    if(window.__bapDebug)window.__bapDebug.llmCalls.push({type:'lawMode',name:name,result:llmResult});
+  } else if(LLM_ENABLED&&reqs.length>0){
+    llmResult=await llmJudge(name||'',reqs);
+  }
+
   // 키 매핑 fallback: LLM이 키를 라벨로 바꿔 반환한 경우 보정
   if(llmResult){
     reqs.forEach(req=>{
@@ -577,22 +591,4 @@ function render(){
       b.textContent='...';b.disabled=true;
       await runFix(r.rgr,r.actions);
       var ar=await fetchAndAnalyze(r.rgr,r.name);
-      res[idx]=ar;render();
-    };
-  });
-  var bfa=document.getElementById('__bfa');
-  if(bfa)bfa.onclick=async function(){
-    if(!confirm('전체 자동수정?\n❌ '+totDel+' + ➕ '+totAdd))return;
-    bfa.textContent='수정중...';bfa.disabled=true;
-    for(var k=0;k<res.length;k++){
-      var r=res[k];if(!r.actions||r.actions.length===0)continue;
-      bfa.textContent='수정중 '+(k+1)+'/'+res.length;
-      await runFix(r.rgr,r.actions);
-      var ar=await fetchAndAnalyze(r.rgr,r.name);
-      res[k]=ar;
-    }
-    render();
-  };
-}
-render();
-})();
+      res[idx]=ar;r
