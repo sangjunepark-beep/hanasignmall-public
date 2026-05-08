@@ -1,12 +1,16 @@
-/* 박스별 검수 v11.0.36 (LOCK 캐시 — 자동수정 결과 박제로 무한루프 차단) */
+/* 박스별 검수 v11.0.37 (5xx 재시도 + LLM null 안전 + 버전 충돌 방지 + LOCK 조건부 박제) */
 (async function(){
+var VER='v11.0.37';
+var oldP=document.getElementById('__bap');if(oldP)oldP.remove();
+if(window.__bapVersion&&window.__bapVersion!==VER){console.log('[bap] 옛 버전 감지:',window.__bapVersion,'→',VER);}
+window.__bapVersion=VER;
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
 var KEY=localStorage.getItem('__ANTHROPIC_KEY');
 if(!KEY){KEY=prompt('Claude API Key:');if(KEY)localStorage.setItem('__ANTHROPIC_KEY',KEY);}
 var LLM_ENABLED=!!KEY;
-window.__bapDebug={llmCalls:[],errors:[]};
-console.log('[bap] v11.0.36 시작 LLM_ENABLED=',LLM_ENABLED);
+window.__bapDebug={llmCalls:[],errors:[],ver:VER};
+console.log('[bap]',VER,'시작 LLM_ENABLED=',LLM_ENABLED);
 var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',MISMATCH:'#ffd6d6',ERR:'#fadbd8',DROP:'#e8e8e8'};
 var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MISMATCH:'부적합포함',ERR:'에러',DROP:'박스부적합'};
 var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠',DROP:'🗑️'};
@@ -59,20 +63,35 @@ function rowJ(s1,s2){
   return 'PARTIAL';
 }
 
+async function llmCallOnce(model,prompt,dbg){
+  var r=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{'x-api-key':KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','content-type':'application/json'},
+    body:JSON.stringify({model:model,max_tokens:4000,temperature:0,messages:[{role:'user',content:prompt}]})
+  });
+  dbg.status=r.status;
+  if(r.status===401){dbg.err='401_KEY_INVALID';return {fatal:true};}
+  if(r.status===429){dbg.err='429_RATE_LIMIT';return {retryable:true};}
+  if(r.status>=500&&r.status<600){dbg.err='5XX_'+r.status;return {retryable:true};}
+  if(!r.ok){dbg.err='HTTP_'+r.status;return {fatal:true};}
+  var j=await r.json();
+  if(!j.content||!j.content[0]){dbg.err='NO_CONTENT';dbg.body=JSON.stringify(j).slice(0,300);return {fatal:true};}
+  return {txt:j.content[0].text};
+}
+
 async function llmCall(model,prompt){
-  var dbg={model:model,promptLen:prompt.length,t:Date.now()};
+  var dbg={model:model,promptLen:prompt.length,t:Date.now(),attempts:0};
   try{
-    var r=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'x-api-key':KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true','content-type':'application/json'},
-      body:JSON.stringify({model:model,max_tokens:4000,temperature:0,messages:[{role:'user',content:prompt}]})
-    });
-    dbg.status=r.status;
-    if(r.status===401){dbg.err='401_KEY_INVALID';window.__bapDebug.errors.push(dbg);console.error('[bap] 401 키 인증 실패!',dbg);return null;}
-    if(r.status===429){dbg.err='429_RATE_LIMIT';window.__bapDebug.errors.push(dbg);console.error('[bap] 429 rate limit',dbg);return null;}
-    var j=await r.json();
-    if(!j.content||!j.content[0]){dbg.err='NO_CONTENT';dbg.body=JSON.stringify(j).slice(0,300);window.__bapDebug.errors.push(dbg);console.error('[bap] no content',dbg);return null;}
-    var txt=j.content[0].text;
+    var res=null;
+    for(var att=0;att<2;att++){
+      dbg.attempts=att+1;
+      res=await llmCallOnce(model,prompt,dbg);
+      if(res.txt)break;
+      if(res.fatal){window.__bapDebug.errors.push(dbg);console.error('[bap] LLM fatal',dbg);return null;}
+      if(res.retryable&&att===0){console.warn('[bap] LLM 재시도 ('+dbg.err+') 1.5s 대기');await new Promise(rs=>setTimeout(rs,1500));continue;}
+      window.__bapDebug.errors.push(dbg);console.error('[bap] LLM 재시도 후도 실패',dbg);return null;
+    }
+    var txt=res.txt;
     dbg.txtLen=txt.length;
     dbg.txtTail=txt.slice(-100);
     var m=txt.match(/```json\s*([\s\S]+?)\s*```/);
@@ -193,7 +212,9 @@ async function llmJudge(name,reqs){
   reqs.forEach((r,i)=>{verifyPt+='  "'+r.key+'": [...최종]'+(i<reqs.length-1?',':'')+'\n';});
   verifyPt+='}\n```\n각 키는 정확히 위 표기로 (cat1|1_1, cat2|2_1 등). 라벨로 바꾸지 말 것.';
   var sonnetResult=await llmCall('claude-sonnet-4-6',verifyPt);
-  return sonnetResult||haikuResult;
+  var finalRes=sonnetResult||haikuResult;
+  if(!finalRes)return {__llmFail:true};
+  return finalRes;
 }
 
 async function buildPlan(s1,s2,name){
@@ -223,8 +244,12 @@ async function buildPlan(s1,s2,name){
   });
   
   var llmResult=null;
-  if(LLM_ENABLED&&reqs.length>0){llmResult=await llmJudge(name||'',reqs);}
-  
+  var llmFailed=false;
+  if(LLM_ENABLED&&reqs.length>0){
+    llmResult=await llmJudge(name||'',reqs);
+    if(llmResult&&llmResult.__llmFail){llmFailed=true;llmResult=null;}
+  }
+
   // 키 매핑 fallback: LLM이 키를 라벨로 바꿔 반환한 경우 보정
   if(llmResult){
     reqs.forEach(req=>{
@@ -246,21 +271,21 @@ async function buildPlan(s1,s2,name){
     });
     if(window.__bapDebug)window.__bapDebug.llmCalls.push({type:'keyMapping',mapped:reqs.map(r=>({k:r.key,found:!!llmResult[r.key],val:llmResult[r.key]}))});
   }
-  
+
   reqs.forEach(req=>{
     var p=req.plan;
     var finalLabels=(llmResult&&llmResult[req.key]&&Array.isArray(llmResult[req.key]))?llmResult[req.key]:null;
-    
+
     if(finalLabels===null){
-      // LLM 실패 → 부적합만 자동 제거 (안전 모드)
-      p.currentItems.filter(i=>isBad(i.label)).forEach(it=>{p.remove.push(it.label);p.removeItems.push(it);});
+      // LLM 실패/null → 아무 변경 없음 (v11.0.37: 부적합 제거조차 안 함, 자동수정 차단)
+      // 사용자가 LLM 응답 없이 자동 수정 누르는 사고 방지
     } else {
       // BAD_SPACES는 LLM 응답에 있어도 제외
       finalLabels=finalLabels.filter(l=>!isBad(l));
       // 가용 공간 list에 없는 라벨 제거 (LLM 환각 방지)
       var allOptLabels=p.allItems.map(i=>i.label);
       finalLabels=finalLabels.filter(l=>allOptLabels.indexOf(l)>=0);
-      
+
       // 제거: 현재 중 최종에 없는 것 (BAD_SPACES 자동 포함)
       p.currentItems.forEach(it=>{
         if(finalLabels.indexOf(it.label)<0){
@@ -274,11 +299,11 @@ async function buildPlan(s1,s2,name){
         if(it){p.add.push(lbl);p.addItems.push(it);}
       });
     }
-    
+
     p.result=p.current.filter(c=>p.remove.indexOf(c)<0).concat(p.add);
   });
-  
-  // catO 박스에 업종(dim 04) 9개 추가
+
+  // catO 박스에 업종(dim 04) 9개 추가 (LLM 실패와 무관 — 단순 보정)
   var indActions=[];
   s1.forEach(b=>{
     if(b.ghost)return;
@@ -288,11 +313,12 @@ async function buildPlan(s1,s2,name){
       if(it)indActions.push({op:'add',type:'cat1',box:b.box,scodeOne:b.catX,catName:b.catName,optType:it.optType,optCode:it.sub,optTxt:it.label,dim:'04'});
     });
   });
-  
+
   rowDbg.llmResult=llmResult;
+  rowDbg.llmFailed=llmFailed;
   rowDbg.plans=plans.map(p=>({k:p.kind+'|'+p.box,cur:p.current.length,rm:p.remove.length,ad:p.add.length}));
   window.__bapDebug.llmCalls.push({type:'buildPlan',row:rowDbg});
-  return {plans:plans,llmUsed:!!llmResult,indActions:indActions};
+  return {plans:plans,llmUsed:!!llmResult,llmFailed:llmFailed,indActions:indActions};
 }
 
 function plansToActions(plans,indActions){
@@ -308,8 +334,15 @@ function plansToActions(plans,indActions){
   return actions.concat(indActions||[]);
 }
 
-async function runFix(rgr,actions,plans){
-  if(actions.length===0)return {success:0,total:0};
+async function runFix(rgr,actions,plans,llmTrust){
+  // llmTrust: LLM이 정상 응답한 경우만 true. false면 LOCK 박제 안 함.
+  if(actions.length===0){
+    // v11.0.37: actions 0이어도 LLM 정상 응답이면 현재 상태 LOCK 박제 (재호출 방지)
+    if(llmTrust&&plans&&plans.length>0){
+      await saveLockFromDom(rgr,plans);
+    }
+    return {success:0,total:0,locked:!!llmTrust};
+  }
   var ok=0;
   for(var i=0;i<actions.length;i+=5){
     var ck=actions.slice(i,i+5);
@@ -320,13 +353,34 @@ async function runFix(rgr,actions,plans){
     }));
     arr.forEach(v=>{ok+=v;});
   }
-  if(plans){
-    var lock={};
-    plans.forEach(function(p){lock[p.kind+'|'+p.box]=p.result||p.current;});
-    localStorage.setItem('__bapLock_'+rgr,JSON.stringify(lock));
-    console.log('[bap] LOCK 저장:',rgr);
+  // v11.0.37 LOCK 조건부 박제: LLM 정상 + 100% 성공 + 실측 DOM
+  var locked=false;
+  if(llmTrust&&ok===actions.length&&plans){
+    locked=await saveLockFromDom(rgr,plans);
+  } else if(plans){
+    console.warn('[bap] LOCK 저장 skip:',rgr,'llmTrust=',llmTrust,'success=',ok+'/'+actions.length);
   }
-  return {success:ok,total:actions.length};
+  return {success:ok,total:actions.length,locked:locked};
+}
+
+async function saveLockFromDom(rgr,plans){
+  // 자동수정 후 실제 DOM 다시 읽어서 그 결과로 LOCK 박제
+  try{
+    var r=await fetch('/AdminManager/MakeGoodsTypeOneDp.php?RgrCode='+rgr+'&EditMode=1',{credentials:'include',cache:'no-store'});
+    var t=await r.text(),d=new DOMParser().parseFromString(t,'text/html');
+    var full=analyzeFull(d);
+    var lock={};
+    plans.forEach(function(p){
+      var src=p.kind==='cat1'?full.boxes1:full.boxes2;
+      var b=src[p.box];
+      if(!b){lock[p.kind+'|'+p.box]=p.result||p.current||[];return;}
+      var actual=b.items.filter(function(i){return i.dim==='05'&&i.checked;}).map(function(i){return (i.label||'').trim();});
+      lock[p.kind+'|'+p.box]=actual;
+    });
+    localStorage.setItem('__bapLock_'+rgr,JSON.stringify(lock));
+    console.log('[bap] LOCK 저장 (실측 DOM):',rgr,Object.keys(lock).length+'박스');
+    return true;
+  }catch(e){console.error('[bap] LOCK 저장 실패:',e);return false;}
 }
 
 async function fetchAndAnalyze(rgr,name,force){
@@ -344,12 +398,13 @@ async function fetchAndAnalyze(rgr,name,force){
         try{
           var lock=JSON.parse(lkRaw);
           var ab=s1.concat(s2);
+          var nrm=function(a){return (a||[]).map(function(s){return String(s||'').trim();}).slice().sort().join('|');};
           var mt=ab.every(function(b){
             if(b.ghost)return true;
             var k=b.kind+'|'+b.box,lk=lock[k];
             if(!lk)return false;
-            var cu=b.d5items.map(function(i){return i.label;}).slice().sort().join(',');
-            return cu===lk.slice().sort().join(',');
+            var cu=b.d5items.map(function(i){return i.label;});
+            return nrm(cu)===nrm(lk);
           });
           if(mt){
             s1.forEach(function(b){if(!b.ghost)b.judge='OK';});
@@ -383,7 +438,7 @@ async function fetchAndAnalyze(rgr,name,force){
       });
     }
     var actions=plansToActions(planResult.plans,planResult.indActions);
-    return {rgr:rgr,name:nm,s1:s1,s2:s2,plans:planResult.plans,actions:actions,llmUsed:planResult.llmUsed};
+    return {rgr:rgr,name:nm,s1:s1,s2:s2,plans:planResult.plans,actions:actions,llmUsed:planResult.llmUsed,llmFailed:!!planResult.llmFailed};
   }catch(e){return {rgr:rgr,name:name,err:String(e).slice(0,40)};}
 }
 
@@ -476,7 +531,9 @@ if(isE){
   var j=rowJ(rd.s1,rd.s2);
   var delN=rd.actions.filter(a=>a.op==='del').length;
   var addN=rd.actions.filter(a=>a.op==='add').length;
-  var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:bold">'+ICO[j]+' '+(rd.name||'(없음)')+llmBadge+'</div><div style="font-size:13px;opacity:.85">'+rgr+' · '+KOR[j]+' · ❌'+delN+' / ➕'+addN+'</div></div><div style="display:flex;gap:6px">'+(rd.actions.length>0?'<button id="__bfx" style="padding:8px 16px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:14px">자동수정 '+rd.actions.length+'</button>':'')+hdrCtrls+'</div></div>';
+  var failBadge=rd.llmFailed?'<span style="background:#d9534f;color:#fff;padding:3px 8px;border-radius:3px;font-size:12px;margin-left:8px">⚠ LLM 응답 실패 — 자동수정 차단</span>':'';
+  var fixBtn=(rd.actions.length>0&&!rd.llmFailed)?'<button id="__bfx" style="padding:8px 16px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:14px">자동수정 '+rd.actions.length+'</button>':'';
+  var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:bold">'+ICO[j]+' '+(rd.name||'(없음)')+llmBadge+failBadge+'</div><div style="font-size:13px;opacity:.85">'+rgr+' · '+KOR[j]+' · ❌'+delN+' / ➕'+addN+' · '+VER+'</div></div><div style="display:flex;gap:6px">'+fixBtn+hdrCtrls+'</div></div>';
   H+='<div class="__bbody" style="padding:14px;overflow:auto;flex:1">';
   H+='<div style="font-size:15px;font-weight:bold;color:#305496;margin:8px 0 6px">📦 상품별 카테고리</div>';
   rd.s1.filter(b=>!b.ghost).forEach(b=>{
@@ -494,8 +551,8 @@ if(isE){
   if(bfx)bfx.onclick=async function(){
     if(!confirm('자동수정?\n❌ 제거 '+delN+' + ➕ 추가 '+addN))return;
     bfx.textContent='수정중...';bfx.disabled=true;
-    var r=await runFix(rgr,rd.actions,rd.plans);
-    bfx.textContent='완료 '+r.success+'/'+r.total;
+    var r=await runFix(rgr,rd.actions,rd.plans,!rd.llmFailed);
+    bfx.textContent='완료 '+r.success+'/'+r.total+(r.locked?' 🔒':'');
     setTimeout(()=>location.reload(),1200);
   };
   return;
@@ -529,7 +586,8 @@ function render(){
   var pg=(url.match(/page=(\d+)/)||[])[1]||'1';
   var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">';
   H+='<div><div style="font-size:18px;font-weight:bold">📋 통합 검수 - '+res.length+'건'+llmBadge+'</div>';
-  H+='<div style="font-size:13px;opacity:.85">'+(CAT_NAMES[cat]||'?')+'('+cat+') / '+pg+'p · ✅'+st.OK+' / ⚠'+st.PARTIAL+' / ❌'+st.EMPTY+(st.MISMATCH?' / 🚫'+st.MISMATCH:'')+(st.ERR?' / err'+st.ERR:'')+' · ❌'+totDel+' ➕'+totAdd+'</div></div>';
+  var llmFailN=res.filter(r=>r.llmFailed).length;
+  H+='<div style="font-size:13px;opacity:.85">'+(CAT_NAMES[cat]||'?')+'('+cat+') / '+pg+'p · ✅'+st.OK+' / ⚠'+st.PARTIAL+' / ❌'+st.EMPTY+(st.MISMATCH?' / 🚫'+st.MISMATCH:'')+(st.ERR?' / err'+st.ERR:'')+' · ❌'+totDel+' ➕'+totAdd+(llmFailN?' · <span style="background:#d9534f;padding:2px 6px;border-radius:3px">⚠ LLM실패 '+llmFailN+'</span>':'')+'</div></div>';
   H+='<div style="display:flex;gap:6px;flex-wrap:wrap">';
   H+='<button data-f="all" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:#fff;color:#305496;font-size:13px">전체</button>';
   H+='<button data-f="fix" class="__bf" style="padding:7px 14px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:13px">수정필요</button>';
@@ -548,7 +606,8 @@ function render(){
     H+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
     H+='<div><div style="font-size:15px;font-weight:bold">'+ICO[j]+' '+(i+1)+'. '+(r.name||'')+'</div><div style="font-size:11px;color:#666;font-family:monospace">'+r.rgr+' · '+KOR[j]+' · ❌'+dN+' / ➕'+aN+'</div></div>';
     H+='<div style="display:flex;gap:6px"><a href="'+el+'" target="_blank" style="padding:6px 12px;background:#305496;color:#fff;text-decoration:none;border-radius:4px;font-size:12px">편집</a>';
-    if(r.actions.length>0)H+='<button data-fix="'+i+'" class="__brfx" style="padding:6px 12px;background:'+(dN>0?'#d9534f':'#ffc107')+';color:'+(dN>0?'#fff':'#000')+';border:none;border-radius:4px;font-size:12px;cursor:pointer;font-weight:bold">'+(dN>0?'수정+제거':'수정')+' '+r.actions.length+'</button>';
+    if(r.llmFailed)H+='<span style="padding:6px 10px;background:#d9534f;color:#fff;border-radius:4px;font-size:11px;font-weight:bold">⚠ LLM실패</span>';
+    else if(r.actions.length>0)H+='<button data-fix="'+i+'" class="__brfx" style="padding:6px 12px;background:'+(dN>0?'#d9534f':'#ffc107')+';color:'+(dN>0?'#fff':'#000')+';border:none;border-radius:4px;font-size:12px;cursor:pointer;font-weight:bold">'+(dN>0?'수정+제거':'수정')+' '+r.actions.length+'</button>';
     H+='</div></div>';
     H+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
     H+='<div><div style="font-size:12px;font-weight:bold;color:#305496;margin-bottom:4px">📦 상품별</div>';
@@ -564,7 +623,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM + LOCK 캐시 (무한루프 차단)<span style="float:right">v11.0.36</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM + LOCK 캐시 + 5xx재시도(v11.0.37)<span style="float:right">'+VER+'</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
@@ -609,20 +668,22 @@ function render(){
     b.onclick=async function(){
       var idx=parseInt(b.getAttribute('data-fix'),10),r=res[idx];
       if(!r||!r.actions)return;
+      if(r.llmFailed){alert('LLM 응답 실패한 행은 자동수정 불가. 다시 검수 후 재시도.');return;}
       b.textContent='...';b.disabled=true;
-      await runFix(r.rgr,r.actions,r.plans);
+      await runFix(r.rgr,r.actions,r.plans,!r.llmFailed);
       var ar=await fetchAndAnalyze(r.rgr,r.name);
       res[idx]=ar;render();
     };
   });
   var bfa=document.getElementById('__bfa');
   if(bfa)bfa.onclick=async function(){
-    if(!confirm('전체 자동수정?\n❌ '+totDel+' + ➕ '+totAdd))return;
+    if(!confirm('전체 자동수정?\n❌ '+totDel+' + ➕ '+totAdd+'\n(LLM 실패 행은 자동 제외)'))return;
     bfa.textContent='수정중...';bfa.disabled=true;
     for(var k=0;k<res.length;k++){
       var r=res[k];if(!r.actions||r.actions.length===0)continue;
+      if(r.llmFailed){console.warn('[bap] LLM 실패 행 skip:',r.rgr);continue;}
       bfa.textContent='수정중 '+(k+1)+'/'+res.length;
-      await runFix(r.rgr,r.actions,r.plans);
+      await runFix(r.rgr,r.actions,r.plans,!r.llmFailed);
       var ar=await fetchAndAnalyze(r.rgr,r.name);
       res[k]=ar;
     }
