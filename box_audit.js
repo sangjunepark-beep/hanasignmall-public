@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.32 (5중 에이전트 검증 (Recommender→Critic+UserSim+Safety→Arbiter)) */
+/* 박스별 검수 v11.0.31 (temperature 0 (LLM 결정성 보장, 재검수 안정화)) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -6,7 +6,7 @@ var KEY=localStorage.getItem('__ANTHROPIC_KEY');
 if(!KEY){KEY=prompt('Claude API Key:');if(KEY)localStorage.setItem('__ANTHROPIC_KEY',KEY);}
 var LLM_ENABLED=!!KEY;
 window.__bapDebug={llmCalls:[],errors:[]};
-console.log('[bap] v11.0.32 시작 LLM_ENABLED=',LLM_ENABLED);
+console.log('[bap] v11.0.31 시작 LLM_ENABLED=',LLM_ENABLED);
 var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',MISMATCH:'#ffd6d6',ERR:'#fadbd8',DROP:'#e8e8e8'};
 var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MISMATCH:'부적합포함',ERR:'에러',DROP:'박스부적합'};
 var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠',DROP:'🗑️'};
@@ -165,47 +165,54 @@ function buildBasePrompt(name,reqs){
 
 async function llmJudge(name,reqs){
   if(!KEY||reqs.length===0)return null;
+  var basePt=buildBasePrompt(name,reqs);
+  var haikuResult=await llmCall('claude-haiku-4-5-20251001',basePt);
   
-  function commonInfo(){
-    var s='# 상품명\n"'+name+'"\n\n# 박스 정보\n';
-    reqs.forEach(r=>{
-      s+='## ['+r.label+']\n현재 체크: ['+(r.current.length?r.current.join(", "):"없음")+']\n가용 공간: ['+r.options.join(", ")+']\n';
-    });
-    return s;
-  }
-  function jsonFormat(){
-    var s='\n# 응답 형식 (절대 준수)\n**JSON 키는 cat1|1_1, cat1|1_2, cat2|2_1 등 그대로. 라벨로 변환 금지.**\n```json\n{\n';
-    reqs.forEach((r,i)=>{s+='  "'+r.key+'": [...]'+(i<reqs.length-1?",":"")+'\n';});
-    s+='}\n```';
-    return s;
-  }
-  
-  // Agent 1: Recommender (Haiku) - 기본 프롬프트 그대로
-  var pt1=buildBasePrompt(name,reqs);
-  var r1=await llmCall('claude-haiku-4-5-20251001',pt1);
-  if(!r1){window.__bapDebug.errors.push({stage:'agent1_fail'});return null;}
-  
-  // Agent 2,3,4 병렬
-  var pt2='# 임무: Critic (부정 관점)\nAgent 1(Recommender)이 추천한 공간 중 상품 주제와 무관한 것을 골라 제거.\n절대부적합(옥상/수영장/화장실/키즈룸/독서실/헬스장/골프연습장) 강제 제외.\n현재 체크되어 있다는 이유로 보존 금지.\n\n'+commonInfo()+'\n# Agent 1 추천\n'+JSON.stringify(r1,null,2)+'\n\n# 너의 작업\n각 박스에서 무관한 공간 제거 후 남은 적합 공간만 list.\n빈 list도 OK. 가용 list에 없는 라벨 응답 금지.\n'+jsonFormat();
-  
-  var pt3='# 임무: UserSim (사용자 검색 시뮬레이션)\n자사몰 사용자가 각 공간 필터를 눌렀을 때 이 상품이 결과로 나오면 자연스러운지 시뮬레이션.\n자연스럽지 않으면 그 공간 제거. 자연스러우면 유지.\n\n'+commonInfo()+'\n# Agent 1 추천\n'+JSON.stringify(r1,null,2)+'\n\n# 시뮬레이션 기준\n각 박스의 추천 공간마다:\n - 사용자가 [공간] 필터 클릭 → 이 상품이 결과 첫 페이지에 뜸 → 사용자가 클릭하고 싶어할까?\n - YES → 유지\n - NO/모호 → 제거\n\n'+jsonFormat();
-  
-  var pt4='# 임무: SafetyAuditor (안전/규제/공공 누락 보강)\n안전/소방/방화/주의/경고/기록표/안내판 같은 사인물은 모든 업종(학교/아파트/병원/회사/공공)에 적합 공간 존재.\nAgent 1이 빈 list 반환했거나 누락한 박스 점검해서 가용 공간 중 적합한 것 1~2개 추가.\n\n'+commonInfo()+'\n# Agent 1 추천\n'+JSON.stringify(r1,null,2)+'\n\n# 너의 작업\n각 박스에서:\n - 빈 list거나 1개뿐인 박스 → 가용 공간 중 안전/공용통로/계단/사무실/입구/관리사무소 등 공통 적합 공간 추가 (해당하면)\n - 이미 충분한 박스 → 그대로 반환\n - 정말 부적합한 박스(예: 차량 안내판이 어린이 시설 박스에 들어감) → 빈 list\n절대부적합(옥상/수영장 등) X. 가용 list에 없는 라벨 X.\n'+jsonFormat();
-  
-  var [r2,r3,r4]=await Promise.all([
-    llmCall('claude-haiku-4-5-20251001',pt2),
-    llmCall('claude-sonnet-4-6',pt3),
-    llmCall('claude-sonnet-4-6',pt4)
-  ]);
-  
-  // Agent 5: Arbiter (Sonnet)
-  var pt5='# 임무: Arbiter (최종 합의 결정자)\n4명의 에이전트 결과를 받아서 박스별 최종 적합 공간을 결정.\n\n'+commonInfo()+'\n# 4명 결과\n## Agent 1 (Recommender, Haiku)\n'+JSON.stringify(r1||{},null,2)+'\n\n## Agent 2 (Critic, Haiku)\n'+JSON.stringify(r2||{},null,2)+'\n\n## Agent 3 (UserSim, Sonnet)\n'+JSON.stringify(r3||{},null,2)+'\n\n## Agent 4 (SafetyAuditor, Sonnet)\n'+JSON.stringify(r4||{},null,2)+'\n\n# 결정 규칙\n각 박스마다:\n1. 4명 모두 추천한 공간 → 강한 합의, 채택\n2. 3명 추천 → 채택 (1명은 환각이거나 보수적)\n3. 2명 추천 → 사용자 관점에서 합리적이면 채택, 아니면 제거\n4. 1명만 추천 → 안전/공공 패턴 (Agent 4)이 추천했으면 채택, 그 외엔 제거\n5. 절대부적합(옥상/수영장/화장실/키즈룸/독서실/헬스장/골프연습장) → 강제 제외\n6. 가용 list에 없는 라벨 → 제외\n\n# 최종 정리\n- 각 박스에서 다수결 + 자기 판단으로 최종 list 결정\n- 1~5개 적합 공간. 정말 적합한 게 없으면 빈 list.\n- 5개 강박 X. 무관한 공간 추가 X.\n'+jsonFormat();
-  var r5=await llmCall('claude-sonnet-4-6',pt5);
-  
-  // 디버그 박제
-  window.__bapDebug.llmCalls.push({type:'5agent',name:name,r1:!!r1,r2:!!r2,r3:!!r3,r4:!!r4,r5:!!r5});
-  
-  return r5||r4||r3||r2||r1;
+  var verifyPt='# 임무\n';
+  verifyPt+='Haiku가 1차 추천한 공간을 엄격히 재검증하는 Sonnet 검수자다.\n';
+  verifyPt+='Haiku는 종종 "가용 공간이니까"라는 이유로 무관한 공간을 남긴다. 너는 그걸 잡아내야 한다.\n\n';
+  verifyPt+='# 상품명\n"'+name+'"\n\n';
+  verifyPt+='# Haiku 1차 결과\n'+JSON.stringify(haikuResult||{},null,2)+'\n\n';
+  verifyPt+='# 재검증 절차\n';
+  verifyPt+='## 1. 상품 주제 확정\n';
+  verifyPt+='상품명: "'+name+'"의 핵심 주제(무엇을 알리는가)와 사용 장소(어디 부착되는가)를 다시 확인.\n\n';
+  verifyPt+='## 2. Haiku 결과 1개씩 검증\n';
+  verifyPt+='Haiku가 추천한 각 공간에 대해 자문:\n';
+  verifyPt+=' - "이 상품이 정말 [공간]에 부착될까?"\n';
+  verifyPt+=' - "자사몰에서 [공간] 필터를 누른 사용자가 이 상품을 보고 만족할까?"\n';
+  verifyPt+='둘 중 하나라도 NO → 그 공간 제거\n\n';
+  verifyPt+='## 3. 누락 확인\n';
+  verifyPt+='상품 주제와 직접 연관된 공간이 가용 list에 있는데 Haiku가 빠뜨렸으면 추가.\n\n';
+  verifyPt+='# 절대 규칙\n';
+  verifyPt+='1. "현재 체크되어 있으니 유지" 같은 이유로 무관한 공간 보존 금지\n';
+  verifyPt+='2. 5개 강박 금지. 1~3개로 좁혀도 OK. 0개도 OK.\n';
+  verifyPt+='3. 옥상/수영장/화장실/키즈룸/독서실/헬스장/골프연습장 절대 X\n';
+  verifyPt+='4. 가용 공간 list에 없는 라벨 응답 금지\n\n';
+  verifyPt+='# 자주 발생하는 오판 (반드시 잡아내기)\n';
+  verifyPt+=' - 어린이/놀이 관련 상품에 "주차장" 추천 → 제거\n';
+  verifyPt+=' - 차량 관련 상품에 "놀이터/공원" 추천 → 제거\n';
+  verifyPt+=' - 의료/병원 상품에 "운동장" 추천 → 제거\n';
+  verifyPt+=' - 식당 관련 상품에 "주차장/계단/공용통로" 추천 → 제거 (식당 내부만)\n';
+  verifyPt+=' - **안전/소방/방화/주의 사인물에 빈 list 반환 → 재검토** (모든 업종에 공용통로/계단/비상구 등 반드시 적합)\n';
+  verifyPt+=' - **기록표/안내판이 학교/병원/회사 등 공공 업종에서 빈 list → 재검토** (복도/계단, 사무실 등 공용 공간 적합)\n';
+  verifyPt+=' - 일반적이라고 무조건 "공용통로/입구" 추가 금지\n\n';
+  verifyPt+='# 빈 list (DROP) 판단 시 주의\n';
+  verifyPt+='Haiku가 빈 list로 답한 박스라도, 그 박스의 가용 공간 중 안전/기록표/공용 게시 패턴에 해당하면 빈 list 유지 X. 적합 공간 1~2개 반드시 찾을 것.\n';
+  verifyPt+='정말 부적합한 경우만 빈 list (예: "차량 2부제 안내판" → "병원" 업종 박스 → 가용에 차량 관련 공간 없음 → 빈 list OK).\n\n';
+  verifyPt+='# 박스 정보\n';
+  reqs.forEach(r=>{
+    verifyPt+='## ['+r.label+']\n';
+    verifyPt+='현재 체크: ['+(r.current.join(', ')||'없음')+']\n';
+    verifyPt+='가용 공간: ['+r.options.join(', ')+']\n';
+    verifyPt+='Haiku 추천: '+JSON.stringify((haikuResult&&haikuResult[r.key])||[])+'\n';
+  });
+  verifyPt+='\n# 응답 형식 (절대 준수)\n';
+  verifyPt+='**중요: JSON 키는 아래 그대로 사용. 절대 변환 금지.**\n';
+  verifyPt+='JSON만:\n```json\n{\n';
+  reqs.forEach((r,i)=>{verifyPt+='  "'+r.key+'": [...최종]'+(i<reqs.length-1?',':'')+'\n';});
+  verifyPt+='}\n```\n각 키는 정확히 위 표기로 (cat1|1_1, cat2|2_1 등). 라벨로 바꾸지 말 것.';
+  var sonnetResult=await llmCall('claude-sonnet-4-6',verifyPt);
+  return sonnetResult||haikuResult;
 }
 
 async function buildPlan(s1,s2,name){
@@ -425,7 +432,7 @@ function attachCtrls(){
   var hdr=p.querySelector('.__bhdr');if(hdr)makeDraggable(hdr);
 }
 var hdrCtrls='<button id="__bmn" style="padding:7px 12px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:14px">—</button><button id="__bcl" style="padding:7px 16px;cursor:pointer;border-radius:4px;border:1px solid #fff;background:transparent;color:#fff;font-size:14px">닫기 X</button>';
-var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 5중 에이전트</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰</span>';
+var llmBadge=LLM_ENABLED?'<span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">🤖 Haiku→Sonnet</span>':'<span style="background:#6c757d;color:#fff;padding:2px 8px;border-radius:3px;font-size:12px;margin-left:8px">룰</span>';
 
 function renderBoxCard(plan){
   var changed=plan.remove.length>0||plan.add.length>0;
@@ -443,7 +450,7 @@ function renderBoxCard(plan){
   return H;
 }
 
-p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'5중 에이전트 검증 중':'룰 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
+p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">⏳ '+(LLM_ENABLED?'Haiku→Sonnet 검증 중':'룰 검수 중')+'...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
 attachCtrls();
 
 if(isE){
@@ -493,7 +500,7 @@ var res=[];
 for(var i=0;i<rgrs.length;i++){
   var o=rgrs[i];
   res.push(await fetchAndAnalyze(o.rgr,o.name));
-  var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent=res.length+' / '+rgrs.length+(LLM_ENABLED?' (5중 에이전트)':'');
+  var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent=res.length+' / '+rgrs.length+(LLM_ENABLED?' (Haiku→Sonnet)':'');
 }
 window.__bapResults=res;
 
@@ -541,7 +548,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 5중 에이전트 검증 (Recommender→Critic+UserSim+Safety→Arbiter)<span style="float:right">v11.0.32</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.31</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
@@ -578,7 +585,7 @@ function render(){
     for(var i=0;i<allRgrs.length;i++){
       var o=allRgrs[i];
       newRes.push(await fetchAndAnalyze(o.rgr,o.name));
-      var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent='검수 '+newRes.length+' / '+allRgrs.length+' (5중 에이전트)';
+      var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent='검수 '+newRes.length+' / '+allRgrs.length+' (Haiku→Sonnet)';
     }
     res=newRes;window.__bapResults=res;render();
   };
