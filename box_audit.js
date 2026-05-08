@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.31 (temperature 0 (LLM 결정성 보장, 재검수 안정화)) */
+/* 박스별 검수 v11.0.33 (v11.0.29 안정 지점 + temperature 0) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -6,7 +6,7 @@ var KEY=localStorage.getItem('__ANTHROPIC_KEY');
 if(!KEY){KEY=prompt('Claude API Key:');if(KEY)localStorage.setItem('__ANTHROPIC_KEY',KEY);}
 var LLM_ENABLED=!!KEY;
 window.__bapDebug={llmCalls:[],errors:[]};
-console.log('[bap] v11.0.31 시작 LLM_ENABLED=',LLM_ENABLED);
+console.log('[bap] v11.0.33 시작 LLM_ENABLED=',LLM_ENABLED);
 var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',MISMATCH:'#ffd6d6',ERR:'#fadbd8',DROP:'#e8e8e8'};
 var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MISMATCH:'부적합포함',ERR:'에러',DROP:'박스부적합'};
 var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠',DROP:'🗑️'};
@@ -113,20 +113,6 @@ function buildBasePrompt(name,reqs){
   pt+='2. 5개 채우려고 무관한 공간 추가 금지\n';
   pt+='3. 절대 부적합: 옥상, 수영장/사우나, 화장실, 키즈룸, 독서실, 헬스장, 골프연습장\n';
   pt+='4. 가용 공간 list에 없는 라벨 절대 응답 금지\n\n';
-  pt+='# 카테고리별 공통 적합 패턴 (반드시 적용)\n';
-  pt+='## 안전/소방/방화/주의/경고 사인물 (예: 소방시설 안내, 화재경보, 비상구 표시, 자체점검 기록표, 안전수칙 등)\n';
-  pt+=' - **모든 업종에서 적합 공간 존재** (학교/아파트/병원/회사 등 어디든 소방시설 있음)\n';
-  pt+=' - 적합 공간: 공용통로/로비, 계단, 복도/계단, 복도, 비상구, 건물외부, 입구, 사무실, 관리사무소\n';
-  pt+=' - 빈 list 반환 절대 금지 — 모든 가용 list에서 위 공간 중 1개 이상 반드시 찾을 것\n';
-  pt+='## 기록표/안내판/표지판 (관리·운영 정보 게시)\n';
-  pt+=' - 공용 게시 공간: 공용통로, 로비, 입구, 관리사무소/사무실, 카운터\n';
-  pt+=' - 학교 박스: 복도/계단, 교무/행정실, 강당 등 공용 공간 적합\n';
-  pt+='## 어린이/놀이 관련\n';
-  pt+=' - 적합: 놀이터/공원, 운동장, 어린이시설\n';
-  pt+=' - 부적합: 주차장, 사무공간\n';
-  pt+='## 차량/주차/도로 관련\n';
-  pt+=' - 적합: 주차장, 공영주차장, 도로/인도, 건물외부\n';
-  pt+=' - 부적합: 놀이터, 사무공간, 매장 내부\n\n';
   pt+='# 검증 체크리스트 (응답 전 자체 점검)\n';
   pt+='각 박스의 최종 답을 정하기 전에 박스마다 점검:\n';
   pt+=' Q1. "상품명: \''+name+'\'"이 이 공간에 부착되는 게 자연스러운가?\n';
@@ -193,12 +179,7 @@ async function llmJudge(name,reqs){
   verifyPt+=' - 차량 관련 상품에 "놀이터/공원" 추천 → 제거\n';
   verifyPt+=' - 의료/병원 상품에 "운동장" 추천 → 제거\n';
   verifyPt+=' - 식당 관련 상품에 "주차장/계단/공용통로" 추천 → 제거 (식당 내부만)\n';
-  verifyPt+=' - **안전/소방/방화/주의 사인물에 빈 list 반환 → 재검토** (모든 업종에 공용통로/계단/비상구 등 반드시 적합)\n';
-  verifyPt+=' - **기록표/안내판이 학교/병원/회사 등 공공 업종에서 빈 list → 재검토** (복도/계단, 사무실 등 공용 공간 적합)\n';
   verifyPt+=' - 일반적이라고 무조건 "공용통로/입구" 추가 금지\n\n';
-  verifyPt+='# 빈 list (DROP) 판단 시 주의\n';
-  verifyPt+='Haiku가 빈 list로 답한 박스라도, 그 박스의 가용 공간 중 안전/기록표/공용 게시 패턴에 해당하면 빈 list 유지 X. 적합 공간 1~2개 반드시 찾을 것.\n';
-  verifyPt+='정말 부적합한 경우만 빈 list (예: "차량 2부제 안내판" → "병원" 업종 박스 → 가용에 차량 관련 공간 없음 → 빈 list OK).\n\n';
   verifyPt+='# 박스 정보\n';
   reqs.forEach(r=>{
     verifyPt+='## ['+r.label+']\n';
@@ -548,7 +529,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.31</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM 강화 프롬프트<span style="float:right">v11.0.33</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
