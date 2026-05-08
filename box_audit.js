@@ -570,4 +570,48 @@ function render(){
       tr.style.display=sh?'':'none';
     });
     Array.from(p.querySelectorAll('.__bf')).forEach(b=>{
-      if(b.getAttribute('data-f')===m){b.style.background='#fff'
+      if(b.getAttribute('data-f')===m){b.style.background='#fff';b.style.color='#305496';}
+      else{b.style.background='transparent';b.style.color='#fff';}
+    });
+  }
+  Array.from(p.querySelectorAll('.__bf')).forEach(b=>{b.onclick=function(){flt(b.getAttribute('data-f'));};});
+  var ball=document.getElementById('__ball');
+  if(ball)ball.onclick=async function(){
+    if(!confirm('전체 페이지 일괄 검수?'))return;
+    p.innerHTML='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between"><div style="font-size:18px;font-weight:bold">📂 전체 페이지 수집 중...</div><div>'+hdrCtrls+'</div></div><div class="__bbody" style="padding:30px;text-align:center"><div id="__bpr" style="font-size:14px;color:#666"></div></div>';
+    attachCtrls();
+    var allRgrs=await fetchAllPagesRgrs(cat);
+    var newRes=[];
+    for(var i=0;i<allRgrs.length;i++){
+      var o=allRgrs[i];
+      newRes.push(await fetchAndAnalyze(o.rgr,o.name));
+      var pgr=document.getElementById('__bpr');if(pgr)pgr.textContent='검수 '+newRes.length+' / '+allRgrs.length+' (Haiku→Sonnet)';
+    }
+    res=newRes;window.__bapResults=res;render();
+  };
+  Array.from(p.querySelectorAll('.__brfx')).forEach(b=>{
+    b.onclick=async function(){
+      var idx=parseInt(b.getAttribute('data-fix'),10),r=res[idx];
+      if(!r||!r.actions)return;
+      b.textContent='...';b.disabled=true;
+      await runFix(r.rgr,r.actions);
+      var ar=await fetchAndAnalyze(r.rgr,r.name);
+      res[idx]=ar;render();
+    };
+  });
+  var bfa=document.getElementById('__bfa');
+  if(bfa)bfa.onclick=async function(){
+    if(!confirm('전체 자동수정?\n❌ '+totDel+' + ➕ '+totAdd))return;
+    bfa.textContent='수정중...';bfa.disabled=true;
+    for(var k=0;k<res.length;k++){
+      var r=res[k];if(!r.actions||r.actions.length===0)continue;
+      bfa.textContent='수정중 '+(k+1)+'/'+res.length;
+      await runFix(r.rgr,r.actions);
+      var ar=await fetchAndAnalyze(r.rgr,r.name);
+      res[k]=ar;
+    }
+    render();
+  };
+}
+render();
+})();
