@@ -1,4 +1,4 @@
-/* 박스별 검수 v11.0.33 (v11.0.29 안정 지점 + temperature 0) */
+/* 박스별 검수 v11.0.36 (LOCK 캐시 — 자동수정 결과 박제로 무한루프 차단) */
 (async function(){
 var url=location.href,isE=/MakeGoodsTypeOneDp\.php/.test(url),isL=/GoodsList\.php/.test(url);
 if(!isE&&!isL){alert('편집 또는 GoodsList 페이지에서 실행');return;}
@@ -6,7 +6,7 @@ var KEY=localStorage.getItem('__ANTHROPIC_KEY');
 if(!KEY){KEY=prompt('Claude API Key:');if(KEY)localStorage.setItem('__ANTHROPIC_KEY',KEY);}
 var LLM_ENABLED=!!KEY;
 window.__bapDebug={llmCalls:[],errors:[]};
-console.log('[bap] v11.0.33 시작 LLM_ENABLED=',LLM_ENABLED);
+console.log('[bap] v11.0.36 시작 LLM_ENABLED=',LLM_ENABLED);
 var COL={OK:'#d5f5e3',PARTIAL:'#fcf3cf',EMPTY:'#fadbd8',GHOST:'#e8daef',MISMATCH:'#ffd6d6',ERR:'#fadbd8',DROP:'#e8e8e8'};
 var KOR={OK:'정상',PARTIAL:'일부부족',EMPTY:'미설정',GHOST:'유령',MISMATCH:'부적합포함',ERR:'에러',DROP:'박스부적합'};
 var ICO={OK:'✅',PARTIAL:'⚠',EMPTY:'❌',GHOST:'👻',MISMATCH:'🚫',ERR:'⚠',DROP:'🗑️'};
@@ -200,9 +200,7 @@ async function buildPlan(s1,s2,name){
   var rowDbg={name:name,t:Date.now(),boxes:[]};
   var plans=[];
   var allBoxes=s1.concat(s2);
-  var lawMode=isLawSign(name);
-  if(lawMode)console.log('[bap] 법령 사인물 모드 (LLM 우회):',name);
-
+  
   var reqs=[];
   allBoxes.forEach(b=>{
     if(b.ghost)return;
@@ -225,20 +223,8 @@ async function buildPlan(s1,s2,name){
   });
   
   var llmResult=null;
-  if(lawMode){
-    // 법령 사인물 → LLM 호출 X. 가용 list ∩ COMMON_LAW_SPACES 채움
-    llmResult={};
-    reqs.forEach(req=>{
-      var p=req.plan;
-      var allOpts=p.allItems.map(i=>i.label);
-      var lawFit=COMMON_LAW_SPACES.filter(s=>allOpts.indexOf(s)>=0);
-      llmResult[req.key]=lawFit;
-    });
-    if(window.__bapDebug)window.__bapDebug.llmCalls.push({type:'lawMode',name:name,result:llmResult});
-  } else if(LLM_ENABLED&&reqs.length>0){
-    llmResult=await llmJudge(name||'',reqs);
-  }
-
+  if(LLM_ENABLED&&reqs.length>0){llmResult=await llmJudge(name||'',reqs);}
+  
   // 키 매핑 fallback: LLM이 키를 라벨로 바꿔 반환한 경우 보정
   if(llmResult){
     reqs.forEach(req=>{
@@ -334,19 +320,16 @@ async function runFix(rgr,actions,plans){
     }));
     arr.forEach(v=>{ok+=v;});
   }
-  // LOCK 저장: 적용 후 예상 상태(=plan.result) 박제
   if(plans){
     var lock={};
-    plans.forEach(function(p){
-      lock[p.kind+'|'+p.box]=p.result||p.current;
-    });
+    plans.forEach(function(p){lock[p.kind+'|'+p.box]=p.result||p.current;});
     localStorage.setItem('__bapLock_'+rgr,JSON.stringify(lock));
     console.log('[bap] LOCK 저장:',rgr);
   }
   return {success:ok,total:actions.length};
 }
 
-async function fetchAndAnalyze(rgr,name,forceRecheck){
+async function fetchAndAnalyze(rgr,name,force){
   try{
     var r=await fetch('/AdminManager/MakeGoodsTypeOneDp.php?RgrCode='+rgr+'&EditMode=1',{credentials:'include',cache:'no-store'});
     var t=await r.text(),d=new DOMParser().parseFromString(t,'text/html');
@@ -355,40 +338,35 @@ async function fetchAndAnalyze(rgr,name,forceRecheck){
     var full=analyzeFull(d);
     var s1=summarize(full.boxes1,'cat1',full.hidO);
     var s2=summarize(full.boxes2,'cat2',null);
-    
-    // LOCK 캐시 체크: 이전에 자동수정 적용한 결과와 현재 상태 일치하면 LLM 우회
-    var lockKey='__bapLock_'+rgr;
-    var lockRaw=localStorage.getItem(lockKey);
-    var lockMatch=false;
-    if(lockRaw && !forceRecheck){
-      try{
-        var lock=JSON.parse(lockRaw);
-        var allBoxes=s1.concat(s2);
-        lockMatch=allBoxes.every(function(b){
-          if(b.ghost)return true;
-          var k=b.kind+'|'+b.box;
-          var locked=lock[k];
-          if(!locked)return false;
-          var cur=b.d5items.map(function(i){return i.label;}).slice().sort().join(',');
-          var lk=locked.slice().sort().join(',');
-          return cur===lk;
-        });
-      }catch(e){}
+    if(!force){
+      var lkRaw=localStorage.getItem('__bapLock_'+rgr);
+      if(lkRaw){
+        try{
+          var lock=JSON.parse(lkRaw);
+          var ab=s1.concat(s2);
+          var mt=ab.every(function(b){
+            if(b.ghost)return true;
+            var k=b.kind+'|'+b.box,lk=lock[k];
+            if(!lk)return false;
+            var cu=b.d5items.map(function(i){return i.label;}).slice().sort().join(',');
+            return cu===lk.slice().sort().join(',');
+          });
+          if(mt){
+            s1.forEach(function(b){if(!b.ghost)b.judge='OK';});
+            s2.forEach(function(b){b.judge='OK';});
+            var lkPlans=ab.filter(function(b){return !b.ghost;}).map(function(b){
+              var cur=b.d5items.map(function(i){return i.label;});
+              return {kind:b.kind,box:b.box,catX:b.catX,catName:b.catName,judge:'OK',
+                current:cur,currentItems:b.d5items,
+                allItems:b.boxRef.items.filter(function(i){return i.dim==='05';}),
+                remove:[],removeItems:[],add:[],addItems:[],result:cur};
+            });
+            console.log('[bap] LOCK 모드:',rgr);
+            return {rgr:rgr,name:nm,s1:s1,s2:s2,plans:lkPlans,actions:[],llmUsed:false,locked:true};
+          }
+        }catch(e){}
+      }
     }
-    if(lockMatch){
-      // LOCK 모드: 모든 박스 OK 처리, LLM 호출 X
-      s1.forEach(function(b){if(!b.ghost)b.judge='OK';});
-      s2.forEach(function(b){b.judge='OK';});
-      var emptyPlans=s1.concat(s2).filter(function(b){return !b.ghost;}).map(function(b){
-        return {kind:b.kind,box:b.box,catX:b.catX,catName:b.catName,judge:'OK',
-          current:b.d5items.map(function(i){return i.label;}),
-          currentItems:b.d5items,allItems:b.boxRef.items.filter(function(i){return i.dim==='05';}),
-          remove:[],removeItems:[],add:[],addItems:[],result:b.d5items.map(function(i){return i.label;})};
-      });
-      console.log('[bap] LOCK 모드 (이전 자동수정 결과와 일치):',rgr);
-      return {rgr:rgr,name:nm,s1:s1,s2:s2,plans:emptyPlans,actions:[],llmUsed:false,locked:true};
-    }
-    
     var planResult=await buildPlan(s1,s2,nm);
     // LLM 결과 반영해서 박스 judge 후처리
     if(planResult.llmUsed){
@@ -498,7 +476,7 @@ if(isE){
   var j=rowJ(rd.s1,rd.s2);
   var delN=rd.actions.filter(a=>a.op==='del').length;
   var addN=rd.actions.filter(a=>a.op==='add').length;
-  var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:bold">'+ICO[j]+' '+(rd.name||'(없음)')+llmBadge+(rd.locked?' <span style="background:#28a745;color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;margin-left:6px">🔒 LOCK</span>':'')+'</div><div style="font-size:13px;opacity:.85">'+rgr+' · '+KOR[j]+' · ❌'+delN+' / ➕'+addN+'</div></div><div style="display:flex;gap:6px">'+(rd.actions.length>0?'<button id="__bfx" style="padding:8px 16px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:14px">자동수정 '+rd.actions.length+'</button>':'')+(rd.locked?'<button id="__brk" style="padding:8px 16px;cursor:pointer;border-radius:4px;border:1px solid #dc3545;background:transparent;color:#dc3545;font-size:13px">🔄 강제 재검수</button>':'')+hdrCtrls+'</div></div>';
+  var H='<div class="__bhdr" style="background:#305496;color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:18px;font-weight:bold">'+ICO[j]+' '+(rd.name||'(없음)')+llmBadge+'</div><div style="font-size:13px;opacity:.85">'+rgr+' · '+KOR[j]+' · ❌'+delN+' / ➕'+addN+'</div></div><div style="display:flex;gap:6px">'+(rd.actions.length>0?'<button id="__bfx" style="padding:8px 16px;cursor:pointer;border-radius:4px;border:none;background:#ffc107;color:#000;font-weight:bold;font-size:14px">자동수정 '+rd.actions.length+'</button>':'')+hdrCtrls+'</div></div>';
   H+='<div class="__bbody" style="padding:14px;overflow:auto;flex:1">';
   H+='<div style="font-size:15px;font-weight:bold;color:#305496;margin:8px 0 6px">📦 상품별 카테고리</div>';
   rd.s1.filter(b=>!b.ghost).forEach(b=>{
@@ -513,13 +491,6 @@ if(isE){
   H+='</div>';
   p.innerHTML=H;attachCtrls();
   var bfx=document.getElementById('__bfx');
-  var brk=document.getElementById('__brk');
-  if(brk)brk.onclick=async function(){
-    localStorage.removeItem('__bapLock_'+rgr);
-    p.innerHTML='<div style="padding:30px">강제 재검수 중...</div>';
-    var rd2=await fetchAndAnalyze(rgr,nm,true);
-    location.reload();
-  };
   if(bfx)bfx.onclick=async function(){
     if(!confirm('자동수정?\n❌ 제거 '+delN+' + ➕ 추가 '+addN))return;
     bfx.textContent='수정중...';bfx.disabled=true;
@@ -593,7 +564,7 @@ function render(){
     H+='</div></div>';
     H+='</div>';
   });
-  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM + LOCK 캐시 (무한루프 차단)<span style="float:right">v11.0.33</span></div>';
+  H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · 이중 LLM + LOCK 캐시 (무한루프 차단)<span style="float:right">v11.0.36</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
     var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
@@ -641,4 +612,22 @@ function render(){
       b.textContent='...';b.disabled=true;
       await runFix(r.rgr,r.actions,r.plans);
       var ar=await fetchAndAnalyze(r.rgr,r.name);
-      res[idx]=ar;r
+      res[idx]=ar;render();
+    };
+  });
+  var bfa=document.getElementById('__bfa');
+  if(bfa)bfa.onclick=async function(){
+    if(!confirm('전체 자동수정?\n❌ '+totDel+' + ➕ '+totAdd))return;
+    bfa.textContent='수정중...';bfa.disabled=true;
+    for(var k=0;k<res.length;k++){
+      var r=res[k];if(!r.actions||r.actions.length===0)continue;
+      bfa.textContent='수정중 '+(k+1)+'/'+res.length;
+      await runFix(r.rgr,r.actions,r.plans);
+      var ar=await fetchAndAnalyze(r.rgr,r.name);
+      res[k]=ar;
+    }
+    render();
+  };
+}
+render();
+})();
