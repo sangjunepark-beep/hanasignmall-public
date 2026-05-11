@@ -1,6 +1,6 @@
-/* 박스별 검수 v4.2 / v11.0.42 (90% 안전망 + 강한광범위추가(6+) 임계 강화) */
+/* 박스별 검수 v4.3 / v11.0.43 (룰 키워드 확장: 소화전/완강기/질식소화포/적치금지 + dropOnly≥2 + hugeAdd≥7) */
 (async function(){
-var VER='v4.2/v11.0.42';
+var VER='v4.3/v11.0.43';
 var oldP=document.getElementById('__bap');if(oldP)oldP.remove();
 if(window.__bapVersion&&window.__bapVersion!==VER){console.log('[bap] 옛 버전 감지:',window.__bapVersion,'→',VER);}
 window.__bapVersion=VER;
@@ -33,7 +33,7 @@ var DOMAIN_RULES=[
    reason:'어린이보호 차량은 학교 교문/주차장/도로 모두 적합'},
   // 법령 (NO_CHANGE = 자동수정 차단)
   {name:'법령/소방',
-   keywords:/소방|자체점검|점검표|기록표|비상구|피난|화재|대피|소화기|안전관리|위험물|특정소방대상물|관계법령|다중이용업소|방화|연기감지|스프링클러|화재경보/,
+   keywords:/소방|자체점검|점검표|기록표|비상구|피난|화재|대피|소화기|소화전|완강기|질식소화포|옥내소화전|옥상출입|옥상안전|옥상난간|적치금지|안전관리|위험물|특정소방대상물|관계법령|다중이용업소|방화|연기감지|스프링클러|화재경보/,
    action:'NO_CHANGE',
    badge:'⚠ 법령 사인물 — 자동수정 차단',
    reason:'법령상 모든 건물용도 광범위 적합 (수동 검토 권장)'},
@@ -496,19 +496,19 @@ async function buildPlan(s1,s2,name){
     suspicious.consistentRemove=Object.keys(labelCount).filter(l=>labelCount[l]>=5).map(l=>({label:l,n:labelCount[l]}));
     // 패턴 2: 박스당 4개 이상 추가 (광범위 추가 인플레이션)
     suspicious.broadAdd=plans.filter(p=>p.add.length>=4).map(p=>({box:p.kind+'|'+p.box,n:p.add.length,labels:p.add.slice()}));
-    // 패턴 2-1 (v4.2): 박스당 6개 이상 추가 (강한 광범위 — 1박스라도 의심)
-    suspicious.hugeAdd=plans.filter(p=>p.add.length>=6).map(p=>({box:p.kind+'|'+p.box,n:p.add.length,labels:p.add.slice()}));
-    // 패턴 3: 박스당 제거 ≥2 + 추가 0 (단순 빼기 사고 패턴)
+    // 패턴 2-1 (v4.3): 박스당 7개 이상 추가 (강한 광범위 — 1박스라도 의심, false positive 줄이려고 6→7로 상향)
+    suspicious.hugeAdd=plans.filter(p=>p.add.length>=7).map(p=>({box:p.kind+'|'+p.box,n:p.add.length,labels:p.add.slice()}));
+    // 패턴 3 (v4.3): 박스당 제거 ≥2 + 추가 0 (단순 빼기) — 임계 ≥3 → ≥2 박스로 강화
     suspicious.dropOnly=plans.filter(p=>p.remove.length>=2&&p.add.length===0).map(p=>({box:p.kind+'|'+p.box,removed:p.remove.slice()}));
   }
-  var v4Suspicious=(suspicious.consistentRemove.length>0||suspicious.broadAdd.length>=2||suspicious.hugeAdd.length>=1||suspicious.dropOnly.length>=3);
+  var v4Suspicious=(suspicious.consistentRemove.length>0||suspicious.broadAdd.length>=2||suspicious.hugeAdd.length>=1||suspicious.dropOnly.length>=2);
   if(v4Suspicious){
     console.warn('[bap] v4 의심 패턴 감지 → 모든 박스 변경 보류:',{consistentRemove:suspicious.consistentRemove.length,broadAdd:suspicious.broadAdd.length,hugeAdd:suspicious.hugeAdd.length,dropOnly:suspicious.dropOnly.length});
     var sumParts=[];
     if(suspicious.consistentRemove.length>0)sumParts.push('동일라벨'+suspicious.consistentRemove.length+'종 일괄제거');
     if(suspicious.hugeAdd.length>=1)sumParts.push('강한광범위추가'+suspicious.hugeAdd.length+'박스(6+)');
     if(suspicious.broadAdd.length>=2)sumParts.push('광범위추가'+suspicious.broadAdd.length+'박스');
-    if(suspicious.dropOnly.length>=3)sumParts.push('단순빼기'+suspicious.dropOnly.length+'박스');
+    if(suspicious.dropOnly.length>=2)sumParts.push('단순빼기'+suspicious.dropOnly.length+'박스');
     var v4Note='🔍 v4의심 ('+sumParts.join(', ')+') — 변경 보류';
     plans.forEach(p=>{
       p.remove=[];p.removeItems=[];p.add=[];p.addItems=[];
@@ -762,7 +762,7 @@ if(isE){
     if(s.consistentRemove.length>0)parts.push('동일라벨 '+s.consistentRemove.length+'종 일괄제거');
     if(s.hugeAdd&&s.hugeAdd.length>=1)parts.push('강한광범위추가 '+s.hugeAdd.length+'박스(6+)');
     if(s.broadAdd.length>=2)parts.push('광범위추가 '+s.broadAdd.length+'박스');
-    if(s.dropOnly.length>=3)parts.push('단순빼기 '+s.dropOnly.length+'박스');
+    if(s.dropOnly.length>=2)parts.push('단순빼기 '+s.dropOnly.length+'박스');
     v4Badge='<span style="background:#fd7e14;color:#fff;padding:3px 8px;border-radius:3px;font-size:12px;margin-left:8px">🔍 v4 의심: '+parts.join(' / ')+'</span>';
   }
   var blockFix=rd.llmFailed||rd.ruleNoChange||rd.llmAllEmpty||rd.llmManyEmpty||rd.v4Suspicious;
@@ -933,7 +933,7 @@ function render(){
         var msg='v4 의심 패턴 감지 — 자동수정 보류:\n';
         if(s.consistentRemove&&s.consistentRemove.length)msg+='• 동일 라벨 일괄 제거: '+s.consistentRemove.map(x=>x.label+'('+x.n+'박스)').join(', ')+'\n';
         if(s.broadAdd&&s.broadAdd.length>=2)msg+='• 광범위 추가 박스: '+s.broadAdd.length+'개\n';
-        if(s.dropOnly&&s.dropOnly.length>=3)msg+='• 단순 빼기 박스: '+s.dropOnly.length+'개\n';
+        if(s.dropOnly&&s.dropOnly.length>=2)msg+='• 단순 빼기 박스: '+s.dropOnly.length+'개\n';
         msg+='\n수동 검토 권장.';
         alert(msg);return;
       }
