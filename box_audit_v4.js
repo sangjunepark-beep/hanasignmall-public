@@ -1,6 +1,6 @@
-/* 박스별 검수 v4.1 / v11.0.41 (사후 의심 패턴 — actions 비움 + CSV 표시 — 일관오판/광범위추가/단순빼기 차단) */
+/* 박스별 검수 v4.2 / v11.0.42 (90% 안전망 + 강한광범위추가(6+) 임계 강화) */
 (async function(){
-var VER='v4.1/v11.0.41';
+var VER='v4.2/v11.0.42';
 var oldP=document.getElementById('__bap');if(oldP)oldP.remove();
 if(window.__bapVersion&&window.__bapVersion!==VER){console.log('[bap] 옛 버전 감지:',window.__bapVersion,'→',VER);}
 window.__bapVersion=VER;
@@ -464,10 +464,11 @@ async function buildPlan(s1,s2,name){
   if(llmResult){
     var resBoxes=plans.filter(p=>p.current.length>0);  // 현재 체크 있는 박스만 카운트
     var emptyBoxes=resBoxes.filter(p=>p.result.length===0);
-    if(resBoxes.length>=2&&emptyBoxes.length===resBoxes.length){
-      // 100% 빈 list → 강한 의심
+    // v4.2: 90% 임계 추가 — 10/11, 9/10 같은 케이스도 잡음 (에스컬레이터 직사각형 사고 방지)
+    if(resBoxes.length>=2&&emptyBoxes.length>=Math.ceil(resBoxes.length*0.9)){
+      // 90%↑ 빈 list → 강한 의심 (사실상 모든 박스 빈 list로 봄)
       llmAllEmpty=true;
-      console.warn('[bap] LLM이 모든 박스 빈 list 반환 → 변경 없음 모드');
+      console.warn('[bap] LLM이 박스 '+emptyBoxes.length+'/'+resBoxes.length+' 비움 (90%↑) → 변경 없음 모드');
       reqs.forEach(req=>{
         var p=req.plan;
         p.remove=[];p.removeItems=[];p.add=[];p.addItems=[];
@@ -487,7 +488,7 @@ async function buildPlan(s1,s2,name){
 
   // ===== v4: 사후 의심 패턴 감지 =====
   // (룰 적용/안전망 행은 이미 변경 actions가 0이라 영향 없음)
-  var suspicious={consistentRemove:[],broadAdd:[],dropOnly:[]};
+  var suspicious={consistentRemove:[],broadAdd:[],hugeAdd:[],dropOnly:[]};
   if(llmResult&&!llmAllEmpty&&!llmManyEmpty){
     // 패턴 1: 한 라벨이 5개 이상 박스에서 동시 제거 (LLM 일관 오판)
     var labelCount={};
@@ -495,15 +496,17 @@ async function buildPlan(s1,s2,name){
     suspicious.consistentRemove=Object.keys(labelCount).filter(l=>labelCount[l]>=5).map(l=>({label:l,n:labelCount[l]}));
     // 패턴 2: 박스당 4개 이상 추가 (광범위 추가 인플레이션)
     suspicious.broadAdd=plans.filter(p=>p.add.length>=4).map(p=>({box:p.kind+'|'+p.box,n:p.add.length,labels:p.add.slice()}));
+    // 패턴 2-1 (v4.2): 박스당 6개 이상 추가 (강한 광범위 — 1박스라도 의심)
+    suspicious.hugeAdd=plans.filter(p=>p.add.length>=6).map(p=>({box:p.kind+'|'+p.box,n:p.add.length,labels:p.add.slice()}));
     // 패턴 3: 박스당 제거 ≥2 + 추가 0 (단순 빼기 사고 패턴)
     suspicious.dropOnly=plans.filter(p=>p.remove.length>=2&&p.add.length===0).map(p=>({box:p.kind+'|'+p.box,removed:p.remove.slice()}));
   }
-  var v4Suspicious=(suspicious.consistentRemove.length>0||suspicious.broadAdd.length>=2||suspicious.dropOnly.length>=3);
+  var v4Suspicious=(suspicious.consistentRemove.length>0||suspicious.broadAdd.length>=2||suspicious.hugeAdd.length>=1||suspicious.dropOnly.length>=3);
   if(v4Suspicious){
-    console.warn('[bap] v4 의심 패턴 감지 → 모든 박스 변경 보류:',{consistentRemove:suspicious.consistentRemove.length,broadAdd:suspicious.broadAdd.length,dropOnly:suspicious.dropOnly.length});
-    // v4.1: 의심 행은 모든 plans의 변경 actions 비우기 (CSV/UI/자동수정 모두 일관)
+    console.warn('[bap] v4 의심 패턴 감지 → 모든 박스 변경 보류:',{consistentRemove:suspicious.consistentRemove.length,broadAdd:suspicious.broadAdd.length,hugeAdd:suspicious.hugeAdd.length,dropOnly:suspicious.dropOnly.length});
     var sumParts=[];
     if(suspicious.consistentRemove.length>0)sumParts.push('동일라벨'+suspicious.consistentRemove.length+'종 일괄제거');
+    if(suspicious.hugeAdd.length>=1)sumParts.push('강한광범위추가'+suspicious.hugeAdd.length+'박스(6+)');
     if(suspicious.broadAdd.length>=2)sumParts.push('광범위추가'+suspicious.broadAdd.length+'박스');
     if(suspicious.dropOnly.length>=3)sumParts.push('단순빼기'+suspicious.dropOnly.length+'박스');
     var v4Note='🔍 v4의심 ('+sumParts.join(', ')+') — 변경 보류';
@@ -757,6 +760,7 @@ if(isE){
   if(rd.v4Suspicious&&rd.suspicious){
     var s=rd.suspicious,parts=[];
     if(s.consistentRemove.length>0)parts.push('동일라벨 '+s.consistentRemove.length+'종 일괄제거');
+    if(s.hugeAdd&&s.hugeAdd.length>=1)parts.push('강한광범위추가 '+s.hugeAdd.length+'박스(6+)');
     if(s.broadAdd.length>=2)parts.push('광범위추가 '+s.broadAdd.length+'박스');
     if(s.dropOnly.length>=3)parts.push('단순빼기 '+s.dropOnly.length+'박스');
     v4Badge='<span style="background:#fd7e14;color:#fff;padding:3px 8px;border-radius:3px;font-size:12px;margin-left:8px">🔍 v4 의심: '+parts.join(' / ')+'</span>';
@@ -877,6 +881,7 @@ function render(){
         var s=r.suspicious||{};
         var parts=[];
         if(s.consistentRemove&&s.consistentRemove.length)parts.push('동일라벨'+s.consistentRemove.length+'종');
+        if(s.hugeAdd&&s.hugeAdd.length)parts.push('강한광범위추가'+s.hugeAdd.length+'박스');
         if(s.broadAdd&&s.broadAdd.length)parts.push('광범위추가'+s.broadAdd.length+'박스');
         if(s.dropOnly&&s.dropOnly.length)parts.push('단순빼기'+s.dropOnly.length+'박스');
         v4tag='🔍 v4의심('+parts.join('/')+')';
