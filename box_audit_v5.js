@@ -1,6 +1,6 @@
-/* 박스별 검수 v5.1 / v11.0.45 (BAD_SPACES 제거는 차단 시에도 가능 — 🧹 부적합만 빼기 버튼) */
+/* 박스별 검수 v5.2 / v11.0.46 (badOnly 조건에 업종 보정 포함 — 부적합+업종보정 함께 안전 처리) */
 (async function(){
-var VER='v5.1/v11.0.45';
+var VER='v5.2/v11.0.46';
 var oldP=document.getElementById('__bap');if(oldP)oldP.remove();
 if(window.__bapVersion&&window.__bapVersion!==VER){console.log('[bap] 옛 버전 감지:',window.__bapVersion,'→',VER);}
 window.__bapVersion=VER;
@@ -754,7 +754,7 @@ if(isE){
   // v5: 모든 차단 사유를 한 빨간 배지로 통합 + 사유는 작은 글씨로
   var blockFix=rd.llmFailed||rd.ruleNoChange||rd.llmAllEmpty||rd.llmManyEmpty||rd.v4Suspicious;
   // v5.1: 차단이어도 actions가 전부 BAD_SPACES 제거뿐이면 "부적합만 빼기"로 활성화
-  var badOnlyMode=blockFix&&rd.actions&&rd.actions.length>0&&rd.actions.every(function(a){return a.op==='del'&&BAD_SPACES.indexOf(a.optTxt)>=0;});
+  var badOnlyMode=blockFix&&rd.actions&&rd.actions.length>0&&rd.actions.every(function(a){return (a.op==='del'&&BAD_SPACES.indexOf(a.optTxt)>=0)||(a.op==='add'&&a.dim==='04');});
   if(badOnlyMode)blockFix=false;
   var why='';
   if(rd.llmFailed)why='LLM 응답 실패';
@@ -777,7 +777,9 @@ if(isE){
   } else {
     verdictBadge='<span style="background:#28a745;color:#fff;padding:4px 10px;border-radius:4px;font-size:13px;margin-left:8px;font-weight:bold">✅ 변경 없음</span>';
   }
-  var fixBtnLabel=badOnlyMode?('🧹 부적합 공간만 빼기 '+rd.actions.length):('자동수정 '+rd.actions.length);
+  var _delBad=rd.actions?rd.actions.filter(function(a){return a.op==='del'&&BAD_SPACES.indexOf(a.optTxt)>=0;}).length:0;
+  var _addInd=rd.actions?rd.actions.filter(function(a){return a.op==='add'&&a.dim==='04';}).length:0;
+  var fixBtnLabel=badOnlyMode?('🧹 안전 정리 — 부적합'+_delBad+'/업종보정'+_addInd):('자동수정 '+rd.actions.length);
   var fixBtnColor=badOnlyMode?'#17a2b8':'#ffc107';
   var fixBtnTextColor=badOnlyMode?'#fff':'#000';
   var fixBtn=(rd.actions.length>0&&(!blockFix||badOnlyMode))?'<button id="__bfx" style="padding:8px 16px;cursor:pointer;border-radius:4px;border:none;background:'+fixBtnColor+';color:'+fixBtnTextColor+';font-weight:bold;font-size:14px">'+fixBtnLabel+'</button>':'';
@@ -864,7 +866,7 @@ function render(){
     // v5: 차단/검토 두 가지 배지로 통합
     var _blocked=r.llmFailed||r.ruleNoChange||r.llmAllEmpty||r.llmManyEmpty||r.v4Suspicious;
     // v5.1: 차단이어도 actions 전부 BAD_SPACES 제거뿐이면 "부적합만 빼기" 버튼 활성화
-    var _badOnly=_blocked&&r.actions&&r.actions.length>0&&r.actions.every(function(a){return a.op==='del'&&BAD_SPACES.indexOf(a.optTxt)>=0;});
+    var _badOnly=_blocked&&r.actions&&r.actions.length>0&&r.actions.every(function(a){return (a.op==='del'&&BAD_SPACES.indexOf(a.optTxt)>=0)||(a.op==='add'&&a.dim==='04');});
     var _why='';
     if(r.llmFailed)_why='LLM 응답 실패';
     else if(r.ruleNoChange)_why='법령 사인물';
@@ -872,7 +874,7 @@ function render(){
     else if(r.llmManyEmpty)_why='LLM이 박스 50%↑ 비움';
     else if(r.v4Suspicious)_why='LLM 의심 패턴';
     if(_blocked&&!_badOnly)H+='<span style="padding:6px 10px;background:#d9534f;color:#fff;border-radius:4px;font-size:12px;font-weight:bold" title="'+_why+'">🚫 건들지 말 것</span><span style="padding:6px 8px;font-size:11px;color:#666">'+_why+'</span>';
-    else if(_badOnly)H+='<span style="padding:6px 10px;background:#d9534f;color:#fff;border-radius:4px;font-size:11px;font-weight:bold;margin-right:6px">🚫 '+_why+'</span><button data-fix="'+i+'" class="__brfx" style="padding:6px 12px;background:#17a2b8;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;font-weight:bold">🧹 부적합만 빼기 '+r.actions.length+'</button>';
+    else if(_badOnly)H+='<span style="padding:6px 10px;background:#d9534f;color:#fff;border-radius:4px;font-size:11px;font-weight:bold;margin-right:6px">🚫 '+_why+'</span><button data-fix="'+i+'" class="__brfx" style="padding:6px 12px;background:#17a2b8;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;font-weight:bold">🧹 안전 정리 '+r.actions.length+'</button>';
     else if(r.ruleApplied&&r.actions.length>0)H+='<button data-fix="'+i+'" class="__brfx" style="padding:6px 12px;background:#ffc107;color:#000;border:none;border-radius:4px;font-size:12px;cursor:pointer;font-weight:bold">✏️ 박스 보고 판단 '+r.actions.length+' (룰)</button>';
     else if(r.actions.length>0)H+='<button data-fix="'+i+'" class="__brfx" style="padding:6px 12px;background:#ffc107;color:#000;border:none;border-radius:4px;font-size:12px;cursor:pointer;font-weight:bold">✏️ 박스 보고 판단 '+r.actions.length+'</button>';
     H+='</div></div>';
@@ -962,7 +964,7 @@ function render(){
       var idx=parseInt(b.getAttribute('data-fix'),10),r=res[idx];
       if(!r||!r.actions)return;
       // v5.1: BAD_SPACES 제거만이면 차단 무시
-      var badOnly=r.actions.every(function(a){return a.op==='del'&&BAD_SPACES.indexOf(a.optTxt)>=0;});
+      var badOnly=r.actions.every(function(a){return (a.op==='del'&&BAD_SPACES.indexOf(a.optTxt)>=0)||(a.op==='add'&&a.dim==='04');});
       if(!badOnly){
         if(r.llmFailed){alert('LLM 응답 실패 — 자동수정 불가');return;}
         if(r.llmAllEmpty||r.llmManyEmpty){alert('LLM이 박스 50%↑ 비움 → 안전망 작동. 수동 검토 필요.');return;}
