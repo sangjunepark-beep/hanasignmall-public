@@ -1,6 +1,6 @@
-/* 박스별 검수 v5.2 / v11.0.46 (badOnly 조건에 업종 보정 포함 — 부적합+업종보정 함께 안전 처리) */
+/* 박스별 검수 v5.3 / v11.0.47 (행 수정 후 같은 위치로 스크롤 복귀) */
 (async function(){
-var VER='v5.2/v11.0.46';
+var VER='v5.3/v11.0.47';
 var oldP=document.getElementById('__bap');if(oldP)oldP.remove();
 if(window.__bapVersion&&window.__bapVersion!==VER){console.log('[bap] 옛 버전 감지:',window.__bapVersion,'→',VER);}
 window.__bapVersion=VER;
@@ -982,6 +982,8 @@ function render(){
       await runFix(r.rgr,r.actions,r.plans,!r.llmFailed);
       var ar=await fetchAndAnalyze(r.rgr,r.name);
       res[idx]=ar;render();
+      // v5.3: 수정한 행 위치로 스크롤 복귀
+      setTimeout(function(){var el=p.querySelector('[data-idx="'+idx+'"]');if(el)el.scrollIntoView({behavior:'instant',block:'center'});},50);
     };
   });
   var bfa=document.getElementById('__bfa');
@@ -994,13 +996,4 @@ function render(){
       if(r.ruleNoChange){console.warn('[bap] 룰 차단 행 skip:',r.rgr,r.ruleName);continue;}
       if(r.llmAllEmpty||r.llmManyEmpty){console.warn('[bap] 안전망 행 skip:',r.rgr);continue;}
       if(r.v4Suspicious){console.warn('[bap] v4 의심 행 skip:',r.rgr);continue;}
-      bfa.textContent='수정중 '+(k+1)+'/'+res.length;
-      await runFix(r.rgr,r.actions,r.plans,!r.llmFailed);
-      var ar=await fetchAndAnalyze(r.rgr,r.name);
-      res[k]=ar;
-    }
-    render();
-  };
-}
-render();
-})();
+      bfa.textContent='수
