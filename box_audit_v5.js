@@ -977,4 +977,16 @@ function render(){
     for(var k=0;k<res.length;k++){
       var r=res[k];if(!r.actions||r.actions.length===0)continue;
       if(r.llmFailed){console.warn('[bap] LLM 실패 행 skip:',r.rgr);continue;}
-      if(r.ruleNoChange){console.warn('[bap] 룰 차단 행 skip:',r.rgr,r.ruleNa
+      if(r.ruleNoChange){console.warn('[bap] 룰 차단 행 skip:',r.rgr,r.ruleName);continue;}
+      if(r.llmAllEmpty||r.llmManyEmpty){console.warn('[bap] 안전망 행 skip:',r.rgr);continue;}
+      if(r.v4Suspicious){console.warn('[bap] v4 의심 행 skip:',r.rgr);continue;}
+      bfa.textContent='수정중 '+(k+1)+'/'+res.length;
+      await runFix(r.rgr,r.actions,r.plans,!r.llmFailed);
+      var ar=await fetchAndAnalyze(r.rgr,r.name);
+      res[k]=ar;
+    }
+    render();
+  };
+}
+render();
+})();
