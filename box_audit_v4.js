@@ -1,6 +1,6 @@
-/* 박스별 검수 v4 / v11.0.40 (사후 의심 패턴 감지 — 일관오판/광범위추가/단순빼기 차단) */
+/* 박스별 검수 v4.1 / v11.0.41 (사후 의심 패턴 — actions 비움 + CSV 표시 — 일관오판/광범위추가/단순빼기 차단) */
 (async function(){
-var VER='v4/v11.0.40';
+var VER='v4.1/v11.0.41';
 var oldP=document.getElementById('__bap');if(oldP)oldP.remove();
 if(window.__bapVersion&&window.__bapVersion!==VER){console.log('[bap] 옛 버전 감지:',window.__bapVersion,'→',VER);}
 window.__bapVersion=VER;
@@ -500,7 +500,19 @@ async function buildPlan(s1,s2,name){
   }
   var v4Suspicious=(suspicious.consistentRemove.length>0||suspicious.broadAdd.length>=2||suspicious.dropOnly.length>=3);
   if(v4Suspicious){
-    console.warn('[bap] v4 의심 패턴 감지:',{consistentRemove:suspicious.consistentRemove.length,broadAdd:suspicious.broadAdd.length,dropOnly:suspicious.dropOnly.length});
+    console.warn('[bap] v4 의심 패턴 감지 → 모든 박스 변경 보류:',{consistentRemove:suspicious.consistentRemove.length,broadAdd:suspicious.broadAdd.length,dropOnly:suspicious.dropOnly.length});
+    // v4.1: 의심 행은 모든 plans의 변경 actions 비우기 (CSV/UI/자동수정 모두 일관)
+    var sumParts=[];
+    if(suspicious.consistentRemove.length>0)sumParts.push('동일라벨'+suspicious.consistentRemove.length+'종 일괄제거');
+    if(suspicious.broadAdd.length>=2)sumParts.push('광범위추가'+suspicious.broadAdd.length+'박스');
+    if(suspicious.dropOnly.length>=3)sumParts.push('단순빼기'+suspicious.dropOnly.length+'박스');
+    var v4Note='🔍 v4의심 ('+sumParts.join(', ')+') — 변경 보류';
+    plans.forEach(p=>{
+      p.remove=[];p.removeItems=[];p.add=[];p.addItems=[];
+      p.result=p.current.slice();
+      p.v4Suspicious=true;
+      p.v4Note=v4Note;
+    });
   }
 
   rowDbg.llmResult=llmResult;
@@ -851,17 +863,33 @@ function render(){
   H+='</div><div style="padding:8px 14px;background:#f5f5f5;font-size:11px;color:#666;border-top:1px solid #ddd">박스마다 [현재 / ❌제거 / ➕추가 / ⇒결과] · forceSpaces 보수화 + 부분비움 안전망 + 동의어 ('+VER+')<span style="float:right">'+VER+'</span></div>';
   p.innerHTML=H;attachCtrls();
   document.getElementById('__bxl').onclick=function(){
-    var hdr=['#','상품코드','상품명','박스','catX','이름','현재','제거','추가','결과','URL'];
+    var hdr=['#','상품코드','상품명','v4판정','박스','catX','이름','현재','제거','추가','결과','URL'];
     var data=[hdr];var n=0;
     res.forEach((r,i)=>{
-      if(r.err){data.push([i+1,r.rgr,r.name||'','','','','','','에러','','']);return;}
+      if(r.err){data.push([i+1,r.rgr,r.name||'','에러','','','','','','','','']);return;}
+      var v4tag='';
+      if(r.llmFailed)v4tag='⚠ LLM실패';
+      else if(r.ruleNoChange)v4tag='📐 룰차단';
+      else if(r.ruleApplied)v4tag='📐 룰적용';
+      else if(r.llmAllEmpty)v4tag='🛡 안전망(전체)';
+      else if(r.llmManyEmpty)v4tag='🛡 안전망(50%)';
+      else if(r.v4Suspicious){
+        var s=r.suspicious||{};
+        var parts=[];
+        if(s.consistentRemove&&s.consistentRemove.length)parts.push('동일라벨'+s.consistentRemove.length+'종');
+        if(s.broadAdd&&s.broadAdd.length)parts.push('광범위추가'+s.broadAdd.length+'박스');
+        if(s.dropOnly&&s.dropOnly.length)parts.push('단순빼기'+s.dropOnly.length+'박스');
+        v4tag='🔍 v4의심('+parts.join('/')+')';
+      }
+      else v4tag='LLM 정상';
       r.plans.forEach(pl=>{
         n++;
         var url=pl.kind==='cat1'?('https://www.hanasignmall.kr/Search.php?GetSearch='+r.rgr+'&CCode='+pl.catX+'&CateCou=1'):('https://www.hanasignmall.kr/shop/DisplayList.php?CCode='+pl.catX+'&CateType=2');
-        data.push([n,r.rgr,r.name||'',pl.kind==='cat1'?'상품별':'업종별',pl.catX,pl.catName,pl.current.join(', ')||'없음',pl.remove.join(', ')||'-',pl.add.join(', ')||'-',pl.result.join(', ')||'없음',url]);
+        data.push([n,r.rgr,r.name||'',v4tag,pl.kind==='cat1'?'상품별':'업종별',pl.catX,pl.catName,pl.current.join(', ')||'없음',pl.remove.join(', ')||'-',pl.add.join(', ')||'-',pl.result.join(', ')||'없음',url]);
       });
     });
-    downloadCSV(data,'박스별검수_v3_'+(CAT_NAMES[cat]||cat)+'_p'+pg+'.csv');
+    var d=new Date(),ts=d.getFullYear().toString().slice(2)+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')+'_'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0');
+    downloadCSV(data,'박스별검수_v4_'+(CAT_NAMES[cat]||cat)+'_p'+pg+'_'+ts+'.csv');
   };
   function flt(m){
     Array.from(p.querySelectorAll('[data-j]')).forEach(tr=>{
@@ -894,7 +922,6 @@ function render(){
       var idx=parseInt(b.getAttribute('data-fix'),10),r=res[idx];
       if(!r||!r.actions)return;
       if(r.llmFailed){alert('LLM 응답 실패 — 자동수정 불가');return;}
-      if(r.ruleNoChange){alert('법령/안전 도메인 룰 적용 — 자동수정 차단됨');return;}
       if(r.llmAllEmpty||r.llmManyEmpty){alert('LLM이 박스 50%↑ 비움 → 안전망 작동. 수동 검토 필요.');return;}
       if(r.v4Suspicious){
         var s=r.suspicious||{};
